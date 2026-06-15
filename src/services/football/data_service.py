@@ -517,18 +517,27 @@ class FootballDataService:
                 g.edge = round(ev, 4) if abs(ev) <= config.MAX_EDGE else None
         return rows
 
-    def _upcoming_matches(self, context: str) -> list[Match]:
-        """Jogos relevantes pra apostar agora: não encerrados, do dia ou nas
-        próximas ~72h."""
+    def _upcoming_matches(self, context: str, *, only_future: bool = False) -> list[Match]:
+        """Jogos relevantes pra apostar nas próximas ~72h.
+
+        only_future=True → SÓ jogos que ainda não começaram (kickoff > agora):
+        usado em props/recomendações, cujo modelo é PRÉ-JOGO — não faz sentido
+        recomendar partida em andamento ou já encerrada. only_future=False
+        mantém uma janela de 3h após o kickoff (ao vivo)."""
         from datetime import timedelta
         now = datetime.now(timezone.utc)
         horizon = now + timedelta(hours=72)
-        floor = now - timedelta(hours=3)
+        floor = now if only_future else now - timedelta(hours=3)
         out = []
         for m in self.matches_domain_for(None, context):
-            if m.status == "finished":
+            if m.status in ("finished", "live"):
                 continue
-            if m.utc_kickoff is None or floor <= m.utc_kickoff <= horizon:
+            if m.utc_kickoff is None:
+                # Sem horário não dá pra garantir que é futuro → fora do modo estrito.
+                if not only_future:
+                    out.append(m)
+                continue
+            if floor <= m.utc_kickoff <= horizon:
                 out.append(m)
         return out
 
@@ -566,7 +575,8 @@ class FootballDataService:
         # baixa, raramente com valor) — ficam de fora pra não poluir.
         focus = {"1x2", "over_under", "btts"}
 
-        matches = self._upcoming_matches(context)
+        # Modelo é pré-jogo → só jogos que ainda não começaram (sem in-play/encerrado).
+        matches = self._upcoming_matches(context, only_future=True)
         out = []
         for m in matches:
             rows = self.match_markets(m.id, context=context)
@@ -713,13 +723,14 @@ class FootballDataService:
         """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador)."""
-        # ":n1" = props com team/número/kickoff (invalida feed cacheado antigo).
-        key = f"{_CACHE_V}:propsfeed:n1:{context}:{limit}:{max_matches}"
+        # ":n2" = só jogos não iniciados (invalida feed antigo que incluía in-play).
+        key = f"{_CACHE_V}:propsfeed:n2:{context}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]
 
-        matches = self._upcoming_matches(context)[:max_matches]
+        # Props são pré-jogo → só partidas que ainda não começaram.
+        matches = self._upcoming_matches(context, only_future=True)[:max_matches]
         out: list[RecommendationOut] = []
         for m in matches:
             try:
