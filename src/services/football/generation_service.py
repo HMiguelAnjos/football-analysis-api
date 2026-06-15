@@ -40,7 +40,7 @@ class GenerationService:
         if home_form is None or away_form is None:
             logger.info("generation: sem forma pro jogo %s — pulado", match.id)
             return []
-        odds = self._data.match_odds_domain(match)
+        odds = self._data.match_odds_domain(match, context=context)
         if odds is None or not odds.markets:
             logger.info("generation: sem odds pro jogo %s — pulado", match.id)
             return []
@@ -72,6 +72,9 @@ class GenerationService:
 
         all_candidates: list[RecommendationCandidate] = []
         persisted = 0
+        prop_count = 0
+        # Jogadores da competição (cacheado) → agrupados por time pras props.
+        players_by_team = self._players_by_team(context)
         for match in matches:
             try:
                 candidates = self.generate_for_match(
@@ -79,7 +82,7 @@ class GenerationService:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("generation: erro no jogo %s (%s)", match.id, exc)
-                continue
+                candidates = []
             all_candidates.extend(candidates)
             if persist:
                 for c in candidates:
@@ -93,9 +96,57 @@ class GenerationService:
                         db.rollback()
                         logger.warning("generation: upsert falhou (%s)", exc)
 
+            # Player props (projeção do modelo, independem de odds).
+            if players_by_team:
+                prop_count += self._generate_props(
+                    db, match, context, players_by_team, persist,
+                )
+
         return {
-            "generated": len(all_candidates),
-            "persisted": persisted,
+            "generated": len(all_candidates) + prop_count,
+            "persisted": persisted + prop_count,
             "matches_analyzed": len(matches),
+            "player_props": prop_count,
             "candidates": all_candidates,
         }
+
+    def _players_by_team(self, context: str) -> dict[int, list]:
+        try:
+            players = self._data.competition_players(context)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("generation: sem jogadores p/ props (%s)", exc)
+            return {}
+        out: dict[int, list] = {}
+        for p in players:
+            if p.team_id:
+                out.setdefault(p.team_id, []).append(p)
+        return out
+
+    def _generate_props(self, db, match, context, players_by_team, persist) -> int:
+        from src.recommendation.player_props import generate_player_props
+        home_form = self._data.team_form(match.home_team.id, context=context)
+        away_form = self._data.team_form(match.away_team.id, context=context)
+        if home_form is None or away_form is None:
+            return 0
+        hp = players_by_team.get(match.home_team.id, [])
+        ap = players_by_team.get(match.away_team.id, [])
+        if not hp and not ap:
+            return 0
+        picks = generate_player_props(
+            match=match, home_form=home_form, away_form=away_form,
+            home_players=hp, away_players=ap,
+        )
+        if not persist:
+            return len(picks)
+        n = 0
+        for pick in picks:
+            try:
+                _, created = rec_svc.upsert_prop(
+                    db, pick, match=match, context=context, kickoff_at=match.utc_kickoff,
+                )
+                if created:
+                    n += 1
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                logger.warning("generation: prop upsert falhou (%s)", exc)
+        return n

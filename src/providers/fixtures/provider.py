@@ -258,6 +258,19 @@ def get_team_form(team_id: int, last_n: int = 10, league_id: Optional[int] = Non
     return _FORMS.get(team_id)
 
 
+def get_recent_results(team_id: int, last_n: int = 15) -> list[Match]:
+    """Jogos finalizados do time no dataset mock (base dos ratings de força)."""
+    out = [m for m in _MATCHES.values()
+           if m.status == "finished" and m.home_goals is not None
+           and team_id in (m.home_team.id, m.away_team.id)]
+    return out[:last_n]
+
+
+def get_live_matches() -> list[Match]:
+    """Jogos ao vivo no dataset mock (geralmente nenhum)."""
+    return [m for m in _MATCHES.values() if m.status == "live"]
+
+
 def get_player(player_id: int) -> Optional[PlayerSeasonStats]:
     return _PLAYERS.get(player_id)
 

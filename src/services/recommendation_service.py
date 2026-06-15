@@ -76,6 +76,39 @@ def upsert_from_candidate(
     return rec, True
 
 
+def upsert_prop(
+    db: Session, pick, *, match, context: str = "general",
+    kickoff_at: Optional[datetime] = None,
+) -> tuple[FootballRecommendation, bool]:
+    """Insere uma recomendação de PLAYER PROP (projeção do modelo, sem odds).
+    UPSERT skip por (match, market, selection, line)."""
+    existing = db.scalar(select(FootballRecommendation).where(
+        FootballRecommendation.match_id == match.id,
+        FootballRecommendation.market == pick.market,
+        FootballRecommendation.selection == pick.selection,
+        FootballRecommendation.line.is_(pick.line) if pick.line is None
+        else FootballRecommendation.line == pick.line,
+    ))
+    if existing is not None:
+        return existing, False
+    rec = FootballRecommendation(
+        context=context, stage=match.stage, group=match.group,
+        match_id=match.id, league=match.league_name or "",
+        home_team=match.home_team.name, away_team=match.away_team.name,
+        market=pick.market, selection=pick.selection, line=pick.line,
+        bookmaker=None, odd=0.0, fair_odd=pick.fair_odd,
+        implied_probability=None, model_probability=pick.model_probability,
+        edge=None, confidence_score=pick.confidence_score,
+        recommendation_reason=pick.recommendation_reason,
+        source="engine", status="pending", is_active=True, was_shown_to_user=True,
+        kickoff_at=kickoff_at,
+    )
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec, True
+
+
 def create_manual(
     db: Session,
     *,

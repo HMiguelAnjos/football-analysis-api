@@ -111,6 +111,7 @@ def generate_recommendations(
     min_odd: Optional[float] = None,
     max_odd: Optional[float] = None,
     min_confidence: Optional[float] = None,
+    lambdas: Optional[tuple[float, float]] = None,
 ) -> list[RecommendationCandidate]:
     """Gera recomendações de valor pra UMA partida.
 
@@ -128,7 +129,7 @@ def generate_recommendations(
     max_odd = config.MAX_ODD if max_odd is None else max_odd
     min_confidence = config.MIN_CONFIDENCE if min_confidence is None else min_confidence
 
-    lam_h, lam_a = expected_goals(home_form, away_form)
+    lam_h, lam_a = lambdas if lambdas is not None else expected_goals(home_form, away_form)
     sm = build_score_matrix(lam_h, lam_a)
 
     sample = min(home_form.matches_played, away_form.matches_played)
@@ -189,13 +190,16 @@ def generate_recommendations(
     return out
 
 
-def predict_markets(home_form: TeamForm, away_form: TeamForm) -> dict:
+def predict_markets(home_form: TeamForm, away_form: TeamForm,
+                    lambdas: Optional[tuple[float, float]] = None) -> dict:
     """Previsão do modelo SÓ a partir da forma (sem odds de casa).
 
     Devolve probabilidades dos principais mercados + gols esperados. Usado pra
     dar "análise" mesmo quando não há odds (ex.: fonte grátis openfootball).
+    `lambdas` permite injetar gols esperados de uma fonte melhor (ratings de
+    força em torneios) em vez de derivar da forma.
     """
-    lam_h, lam_a = expected_goals(home_form, away_form)
+    lam_h, lam_a = lambdas if lambdas is not None else expected_goals(home_form, away_form)
     sm = build_score_matrix(lam_h, lam_a)
     w = match_winner(sm)
     ou = over_under(sm, 2.5)

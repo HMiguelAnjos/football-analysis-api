@@ -19,6 +19,9 @@ ENV/
 .env.*
 !.env.example
 
+# Bancos SQLite locais (testes/scratch — o real é Postgres).
+*.db
+
 # Python tooling caches
 .pytest_cache/
 .mypy_cache/

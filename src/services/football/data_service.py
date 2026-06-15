@@ -57,14 +57,17 @@ class FootballDataService:
             )
         self._disk = disk_cache
         self._odds_cache = odds_cache or SimpleCache(name="football_odds")
+        # Memo em memória dos ratings de força por contexto (reconstrução do
+        # disco é barata, mas evita refazê-la a cada jogo no loop de oportunidades).
+        self._ratings_mem: dict[str, tuple] = {}
 
     # --- providers ---------------------------------------------------------
 
     def _football(self, context: str = "general"):
         return registry.get_football_provider(context)
 
-    def _odds(self):
-        return registry.get_odds_provider()
+    def _odds(self, context: str = "general"):
+        return registry.get_odds_provider(context)
 
     # --- domínio (cacheado em disco; reusado pelo engine) ------------------
 
@@ -111,18 +114,58 @@ class FootballDataService:
             self._disk.set(key, serde.form_to_dict(form), config.STATS_CACHE_TTL)
         return form
 
-    def match_odds_domain(self, match: Match) -> Optional[MatchOdds]:
-        key = f"odds:{match.id}"
-        cached = self._odds_cache.get(key)
-        if cached is not None:
-            return cached
-        provider = self._odds()
+    @staticmethod
+    def _odds_key(match_id: int, context: str) -> str:
+        return f"odds:{context}:{match_id}"
+
+    @staticmethod
+    def _odds_ttl(match: Match) -> int:
+        """TTL das odds por estado: ao vivo curto (fallback; o worker invalida
+        por gol), pré-jogo/encerrado longo (odds andam devagar)."""
+        if match.status == "live":
+            return config.ODDS_LIVE_TTL
+        return config.ODDS_PREMATCH_TTL
+
+    def match_odds_domain(self, match: Match, *, context: str = "general",
+                          force: bool = False) -> Optional[MatchOdds]:
+        """Odds por jogo (event_odds, caro). TTL por estado do jogo; `force`
+        ignora o cache (usado pelo refresh por evento ao vivo)."""
+        key = self._odds_key(match.id, context)
+        if not force:
+            cached = self._odds_cache.get(key)
+            if cached is not None:
+                return cached
+        provider = self._odds(context)
         if provider is None:
             return None
         odds = provider.get_match_odds(match)
         if odds is not None:
-            self._odds_cache.set(key, odds, config.ODDS_CACHE_TTL)
+            self._odds_cache.set(key, odds, self._odds_ttl(match))
         return odds
+
+    def invalidate_odds(self, match_id: int, context: str = "general") -> None:
+        """Descarta as odds cacheadas de um jogo (chamado quando há gol ao vivo)."""
+        self._odds_cache.invalidate(self._odds_key(match_id, context))
+
+    def live_matches(self, context: str = "general") -> list[Match]:
+        """Jogos ao vivo do contexto, via 1 chamada agregada barata
+        (fixtures?live=all), filtrados pelas ligas do contexto. Cache curtíssimo
+        pra não repetir a chamada dentro do mesmo tick."""
+        key = f"live:{context}"
+        cached = self._odds_cache.get(key)
+        if cached is not None:
+            return cached
+        getter = getattr(self._football(context), "get_live_matches", None)
+        if getter is None:
+            return []
+        try:
+            allowed = set(competition.resolve(context).league_ids)
+            live = [m for m in (getter() or []) if not allowed or m.league_id in allowed]
+        except Exception:  # noqa: BLE001 — provider instável nunca derruba o worker
+            logger.warning("live_matches: falha buscando jogos ao vivo (%s)", context)
+            live = []
+        self._odds_cache.set(key, live, 30)
+        return live
 
     # --- API pública (schemas do front) ------------------------------------
 
@@ -130,15 +173,16 @@ class FootballDataService:
     def today_str() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    def _h2h_for(self, date: str, matches: list[Match]) -> dict[int, dict]:
+    def _h2h_for(self, key_suffix: str, matches: list[Match],
+                 context: str = "general") -> dict[int, dict]:
         """1x2 inline em lote, cacheado em memória (TTL curto, barato)."""
         if not matches:
             return {}
-        key = f"h2h:{date}"
+        key = f"h2h:{key_suffix}"
         cached = self._odds_cache.get(key)
         if cached is not None:
             return cached
-        provider = self._odds()
+        provider = self._odds(context)
         getter = getattr(provider, "get_h2h_odds", None) if provider else None
         h2h = getter(matches) if getter else {}
         self._odds_cache.set(key, h2h, config.ODDS_CACHE_TTL)
@@ -178,7 +222,7 @@ class FootballDataService:
             domain = [m for m in domain if m.league_id == league_id]
         if status:
             domain = [m for m in domain if m.status == status]
-        h2h = self._h2h_for(f"{context}:{d}", domain)
+        h2h = self._h2h_for(f"{context}:{d}", domain, context)
         out = []
         for m in domain:
             odds = h2h.get(m.id)
@@ -217,7 +261,8 @@ class FootballDataService:
 
     def match_statistics(self, match_id: int,
                          context: str = "general") -> Optional[MatchStatisticsSchema]:
-        key = f"{_CACHE_V}:stats:{context}:{match_id}"
+        # ":c2" = recomendação calibrada (invalida cache com edge cru antigo).
+        key = f"{_CACHE_V}:stats:c2:{context}:{match_id}"
         cached = self._disk.get(key)
         if cached is not None:
             return MatchStatisticsSchema.model_validate(cached)
@@ -272,21 +317,34 @@ class FootballDataService:
         nunca ficar vazia. Usa a forma; sem forma, cai em médias da liga.
         """
         from src.providers.base import TeamForm
-        from src.recommendation.engine import generate_recommendations, predict_markets
+        from src.recommendation.engine import predict_markets
 
         hf = home_form or TeamForm(team_id=m.home_team.id)
         af = away_form or TeamForm(team_id=m.away_team.id)
         scarce = home_form is None or away_form is None
 
-        # 1) Com odds → recomendação de valor (edge).
-        odds = self.match_odds_domain(m)
-        if odds is not None and odds.markets:
-            cands = generate_recommendations(match=m, home_form=hf, away_form=af, odds=odds)
-            if cands:
-                return front_mappers.candidate_to_out(cands[0]), cands[0].recommendation_reason
+        # Gols esperados via ratings de força (torneio) ou modelo de forma — a
+        # MESMA fonte usada na tabela de mercados, pra a análise bater com ela.
+        lam = self._lambdas(m, hf, af, context)
 
-        # 2) Sem odds → previsão do modelo (probabilidades + odd justa).
-        p = predict_markets(hf, af)
+        # 1) MELHOR aposta de valor CALIBRADA (mesma régua da aba Recomendações:
+        #    de-vig + blend + teto). Antes usava o engine cru e mostrava edges
+        #    irreais (ex.: BTTS +107%); agora bate número a número com a tabela.
+        rows = self.match_markets(m.id, context=context)
+        focus = {"1x2", "over_under", "btts"}
+        cands = [
+            r for r in rows
+            if r.market in focus and r.odd is not None and r.edge is not None
+            and r.edge >= config.MIN_EDGE and config.MIN_ODD <= r.odd <= config.MAX_ODD
+        ]
+        if cands:
+            best = max(cands, key=lambda x: x.edge)
+            sample = min(hf.matches_played, af.matches_played)
+            out = self._value_out(m, best, sample, context)
+            return out, out.reason
+
+        # 2) Sem valor claro → previsão do modelo (probabilidades, sem edge).
+        p = predict_markets(hf, af, lambdas=lam)
         note = (
             f"Modelo: Casa {p['home']*100:.0f}% · Empate {p['draw']*100:.0f}% · "
             f"Fora {p['away']*100:.0f}%. Over 2.5: {p['over25']*100:.0f}% · "
@@ -312,8 +370,367 @@ class FootballDataService:
         m = self.match_domain(match_id, context=context)
         if m is None:
             return None
-        odds = self.match_odds_domain(m)
+        odds = self.match_odds_domain(m, context=context)
         return conv.odds_to_schema(odds) if odds else None
+
+    def _ratings(self, context: str):
+        """Ratings de força (ataque/defesa) das seleções do torneio, AJUSTADOS
+        POR ADVERSÁRIO a partir do histórico recente (qualifiers/amistosos/Nations
+        League). É o prior que conserta o modelo subvalorizando favoritos no
+        início do torneio. None fora de torneio ou sem dados suficientes."""
+        import time as _t
+
+        from src.probability import TeamRatings, compute_ratings
+
+        cfg = competition.resolve(context)
+        if not cfg.tournament:
+            return None
+
+        memo = self._ratings_mem.get(context)
+        if memo and (_t.monotonic() - memo[1]) < 600:
+            return memo[0]
+
+        def _remember(r):
+            self._ratings_mem[context] = (r, _t.monotonic())
+            return r
+
+        key = f"{_CACHE_V}:ratings:{context}:{cfg.season}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return _remember(TeamRatings(
+                avg=cached.get("avg", 1.35),
+                attack={int(k): v for k, v in cached.get("attack", {}).items()},
+                defense={int(k): v for k, v in cached.get("defense", {}).items()},
+            ))
+
+        getter = getattr(self._football(context), "get_recent_results", None)
+        if getter is None:
+            return None
+        team_ids: set[int] = set()
+        for sm_ in self.season_matches_domain(context):
+            team_ids.add(sm_.home_team.id)
+            team_ids.add(sm_.away_team.id)
+        if not team_ids:
+            return None
+
+        results: dict[int, Match] = {}
+        for tid in team_ids:
+            try:
+                for rm in (getter(tid, config.RATINGS_RECENT_N) or []):
+                    results[rm.id] = rm
+            except Exception:  # noqa: BLE001 — provider instável nunca derruba o feed
+                logger.warning("ratings: falha buscando resultados do time %s", tid)
+        if len(results) < 5:  # dados insuficientes → fallback no modelo de forma
+            return None
+
+        ratings = compute_ratings(list(results.values()),
+                                  iterations=config.RATINGS_ITERATIONS)
+        self._disk.set(key, {
+            "avg": ratings.avg,
+            "attack": {str(k): v for k, v in ratings.attack.items()},
+            "defense": {str(k): v for k, v in ratings.defense.items()},
+        }, config.STATS_CACHE_TTL)
+        return _remember(ratings)
+
+    def _lambdas(self, m: Match, hf: TeamForm, af: TeamForm, context: str) -> tuple[float, float]:
+        """Gols esperados do jogo. Em torneio, usa os ratings de força (ajustados
+        por adversário) quando ambos os times têm rating; senão cai no modelo de
+        forma (expected_goals). Fonte única pra TODOS os mercados → consistência."""
+        from src.probability import expected_goals
+
+        ratings = self._ratings(context)
+        if ratings is not None and ratings.has(m.home_team.id) and ratings.has(m.away_team.id):
+            return ratings.lambdas(m.home_team.id, m.away_team.id,
+                                   home_advantage=config.TOURNAMENT_HOME_ADV)
+        return expected_goals(hf, af)
+
+    def match_markets(self, match_id: int, context: str = "general"):
+        """Probabilidades do modelo + odd justa (+ odd/edge se houver odds) pros
+        principais mercados de gols do jogo. Base dos blocos 'Probabilidades' e
+        'Mercados' da análise."""
+        import statistics as _st
+        from src.probability import build_score_matrix, edge as _edge
+        from src.probability.markets import (
+            btts, double_chance, draw_no_bet, match_winner, over_under,
+        )
+        from src.providers.base import TeamForm
+        from src.schemas.football_schemas import MarketLineSchema
+
+        m = self.match_domain(match_id, context=context)
+        if m is None:
+            return []
+        hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
+        af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+        sm = build_score_matrix(*self._lambdas(m, hf, af, context))
+
+        odd_map: dict[tuple, list[float]] = {}
+        odds = self.match_odds_domain(m, context=context)
+        if odds:
+            for mk, mo in odds.markets.items():
+                for s in mo.selections:
+                    odd_map.setdefault((mk, s.name, s.line), []).append(s.price)
+
+        rows = []
+
+        def add(market: str, selection: str, prob: float, line=None):
+            prices = odd_map.get((market, selection, line))
+            odd = round(_st.mean(prices), 2) if prices else None
+            rows.append(MarketLineSchema(
+                market=market, selection=selection, line=line,
+                model_prob=round(prob, 4), fair_odd=round(1 / prob, 2) if prob > 0 else 0.0,
+                odd=odd, edge=round(_edge(prob, odd), 4) if odd else None,
+                confidence=round(min(prob, 0.97) * 100, 1),
+            ))
+
+        w = match_winner(sm)
+        for sel in ("home", "draw", "away"):
+            add("1x2", sel, w[sel])
+        for sel, val in double_chance(sm).items():
+            add("double_chance", sel, val)
+        for sel, val in draw_no_bet(sm).items():
+            add("dnb", sel, val)
+        for line in (0.5, 1.5, 2.5, 3.5):
+            ou = over_under(sm, line)
+            add("over_under", "over", ou["over"], line)
+            add("over_under", "under", ou["under"], line)
+        b = btts(sm)
+        add("btts", "yes", b["yes"])
+        add("btts", "no", b["no"])
+
+        # Calibração do edge: de-vig + blend modelo×mercado por grupo de mercado;
+        # edge irreal (> MAX_EDGE = erro do modelo) vira None (mostra "—").
+        from collections import defaultdict
+        from src.probability import remove_vig
+        groups: dict[tuple, list] = defaultdict(list)
+        for r in rows:
+            groups[(r.market, r.line)].append(r)
+        for grp in groups.values():
+            godds = [g.odd for g in grp]
+            if not all(godds) or len(godds) < 2:
+                for g in grp:
+                    g.edge = None if g.odd is None else g.edge
+                continue
+            devig = remove_vig(godds)
+            for g, mkt_p in zip(grp, devig):
+                final = config.MODEL_MARKET_BLEND * g.model_prob + (1 - config.MODEL_MARKET_BLEND) * mkt_p
+                ev = final * g.odd - 1.0
+                g.edge = round(ev, 4) if abs(ev) <= config.MAX_EDGE else None
+        return rows
+
+    def _upcoming_matches(self, context: str) -> list[Match]:
+        """Jogos relevantes pra apostar agora: não encerrados, do dia ou nas
+        próximas ~72h."""
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        horizon = now + timedelta(hours=72)
+        floor = now - timedelta(hours=3)
+        out = []
+        for m in self.matches_domain_for(None, context):
+            if m.status == "finished":
+                continue
+            if m.utc_kickoff is None or floor <= m.utc_kickoff <= horizon:
+                out.append(m)
+        return out
+
+    # Rótulo PT-BR + motivo de uma linha de mercado calibrada, no feed de valor.
+    @staticmethod
+    def _opp_selection(market: str, selection: str, line, home: str, away: str) -> str:
+        if market == "1x2":
+            return {"home": home, "away": away, "draw": "Empate"}.get(selection, selection)
+        if market == "over_under":
+            return "Over" if selection == "over" else "Under"
+        if market == "btts":
+            return "Sim" if selection == "yes" else "Não"
+        return selection
+
+    def opportunities(self, *, context: str = "general", limit: int = 30,
+                      min_edge: Optional[float] = None, min_odd: Optional[float] = None,
+                      max_odd: Optional[float] = None):
+        """Apostas de VALOR entre os jogos próximos — 1X2, over/under e BTTS.
+
+        Reusa `match_markets`, que já entrega o edge CALIBRADO (de-vig + blend
+        modelo×mercado, com TETO MAX_EDGE). Assim o feed de valor e a tabela de
+        Mercados batem número a número (consistência = confiança). Filtramos por
+        edge mínimo e faixa de odd — over/under e BTTS é onde moram as odds
+        ~1.8-2.0 com valor. Ao vivo, sem banco.
+        """
+        from src.probability import confidence_score
+        from src.providers.base import TeamForm
+        from src.services.football import front_mappers
+
+        min_edge = config.MIN_EDGE if min_edge is None else min_edge
+        min_odd = config.MIN_ODD if min_odd is None else min_odd
+        max_odd = config.MAX_ODD if max_odd is None else max_odd
+
+        # Mercados-foco do feed de valor. DC/DNB são hedges de favorito (odd
+        # baixa, raramente com valor) — ficam de fora pra não poluir.
+        focus = {"1x2", "over_under", "btts"}
+
+        matches = self._upcoming_matches(context)
+        out = []
+        for m in matches:
+            rows = self.match_markets(m.id, context=context)
+            if not rows:
+                continue
+            hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
+            af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+            sample = min(hf.matches_played, af.matches_played)
+            for r in rows:
+                if r.market not in focus or r.odd is None or r.edge is None:
+                    continue
+                if r.edge < min_edge or not (min_odd <= r.odd <= max_odd):
+                    continue
+                out.append(self._value_out(m, r, sample, context))
+        out.sort(key=lambda r: r.edge or 0, reverse=True)
+        return out[:limit]
+
+    def _value_out(self, m: Match, r, sample: int, context: str) -> RecommendationOut:
+        """Linha de mercado CALIBRADA (match_markets) → recomendação de valor.
+        Fonte ÚNICA usada pela aba Recomendações E pelo bloco da análise — então
+        os dois mostram exatamente o mesmo número pro mesmo jogo/mercado."""
+        from src.probability import confidence_score
+
+        # Probabilidade FINAL (coerente com o edge calibrado nesta odd):
+        # final × odd − 1 = edge. r.model_prob é a CRUA (não bate com o edge
+        # blendado) — exibir a final deixa o card consistente.
+        final = (1 + r.edge) / r.odd
+        conf = confidence_score(edge_value=r.edge, model_probability=final,
+                                matches_sample=sample, has_xg=False)
+        # Edge colado no TETO = forte discordância com o mercado, que costuma ser
+        # ERRO do modelo (não valor real). Rebaixa a confiança pra não "vender
+        # forte": >=90% do teto → no máx. "baixa"; >=70% → no máx. "média".
+        if r.edge >= 0.90 * config.MAX_EDGE:
+            conf = min(conf, 44.0)
+        elif r.edge >= 0.70 * config.MAX_EDGE:
+            conf = min(conf, 69.0)
+        sel = self._opp_selection(
+            r.market, r.selection, r.line, m.home_team.name, m.away_team.name)
+        line_txt = f" {r.line:g}" if r.line is not None else ""
+        return RecommendationOut(
+            id=0, match=f"{m.home_team.name} x {m.away_team.name}",
+            match_id=m.id, league=m.league_name or None, market=r.market,
+            selection=sel, line=r.line, odd=r.odd,
+            fair_odd=round(1 / final, 2) if final > 0 else None,
+            model_prob=round(final, 4),
+            implied_prob=round(1 / r.odd, 4) if r.odd else None,
+            edge=r.edge, confidence=front_mappers.confidence_label(conf),
+            status="pending", reason=(
+                f"Estimativa {final*100:.0f}% para {sel}{line_txt} "
+                f"vs odd {r.odd:.2f} (casa estima {100/r.odd:.0f}%). "
+                f"Valor de {r.edge*100:+.1f}%."
+            ),
+            bookmaker=None, created_at="", stage=m.stage, group=m.group,
+            kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
+            context=context,
+        )
+
+    # Posições do elenco que valem props de finalização/gol (poupa chamadas:
+    # goleiro/zagueiro raramente viram pick de chute/artilheiro).
+    _PROP_POSITIONS = ("Attacker", "Midfielder")
+    # Teto de jogadores enriquecidos por time (squad vem ordenado) — limita o
+    # custo de API. generate_player_props já pega só o top N por chute/gol.
+    _SQUAD_ENRICH_CAP = 12
+
+    def _player_season_cached(self, player_id: int, season: int, context: str):
+        """Stats de temporada de um jogador (clube+seleção agregadas), cacheadas
+        em disco por jogador — reusadas entre times, jogos e telas."""
+        import dataclasses
+
+        from src.providers.base import PlayerSeasonStats
+
+        key = f"{_CACHE_V}:pseason:{player_id}:{season}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return PlayerSeasonStats(**cached) if cached else None
+        getter = getattr(self._football(context), "get_player_season", None)
+        if getter is None:
+            return None
+        stats = None
+        try:
+            stats = getter(player_id, season)
+        except Exception:  # noqa: BLE001 — jogador problemático não derruba o pool
+            logger.warning("props: falha buscando stats do jogador %s", player_id)
+        # Cacheia inclusive o vazio ({}) pra não re-bater no mesmo id sem dado.
+        self._disk.set(key, dataclasses.asdict(stats) if stats else {},
+                       config.CATALOG_CACHE_TTL)
+        return stats
+
+    def team_player_pool(self, team_id: int, context: str = "general") -> list[PlayerSchema]:
+        """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção) —
+        base das props ANTES do time jogar no torneio. Cacheado por time."""
+        # ":n1" = inclui número da camisa no pool (invalida cache antigo sem nº).
+        key = f"{_CACHE_V}:squadpool:n1:{context}:{team_id}:{config.CURRENT_SEASON}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return [PlayerSchema.model_validate(d) for d in cached]
+
+        get_squad = getattr(self._football(context), "get_squad", None)
+        pool: list[PlayerSchema] = []
+        if get_squad is not None:
+            try:
+                squad = get_squad(team_id) or []
+            except Exception:  # noqa: BLE001
+                logger.warning("props: falha buscando elenco do time %s", team_id)
+                squad = []
+            relevant = [s for s in squad if s.position in self._PROP_POSITIONS]
+            for sp in relevant[: self._SQUAD_ENRICH_CAP]:
+                stats = self._player_season_cached(sp.player_id, config.CURRENT_SEASON, context)
+                if stats is None or stats.appearances <= 0:
+                    continue
+                stats.team_id = team_id
+                stats.name = stats.name or sp.name
+                stats.number = sp.number          # nº da camisa vem do elenco
+                pool.append(conv.player_to_schema(stats))
+
+        # Fallback: time que já jogou no torneio (squad indisponível/sem stats).
+        if not pool:
+            pool = [p for p in self.competition_players(context) if p.team_id == team_id]
+
+        if pool:
+            self._disk.set(key, [p.model_dump(mode="json") for p in pool],
+                           config.CATALOG_CACHE_TTL)
+        return pool
+
+    def match_props(self, match_id: int, context: str = "general"):
+        """Player props recomendadas pra ESTE jogo (projeção × adversário)."""
+        from src.providers.base import TeamForm
+        from src.recommendation.player_props import generate_player_props
+
+        m = self.match_domain(match_id, context=context)
+        if m is None:
+            return []
+        hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
+        af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+        picks = generate_player_props(
+            match=m, home_form=hf, away_form=af,
+            home_players=self.team_player_pool(m.home_team.id, context),
+            away_players=self.team_player_pool(m.away_team.id, context),
+        )
+        return [front_mappers.prop_to_out(pk, m) for pk in picks]
+
+    def props(self, *, context: str = "general", limit: int = 40,
+              max_matches: int = 6):
+        """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
+        gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
+        (o caro é o elenco/temporada, já cacheado por time/jogador)."""
+        # ":n1" = props com team/número/kickoff (invalida feed cacheado antigo).
+        key = f"{_CACHE_V}:propsfeed:n1:{context}:{limit}:{max_matches}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return [RecommendationOut.model_validate(d) for d in cached]
+
+        matches = self._upcoming_matches(context)[:max_matches]
+        out: list[RecommendationOut] = []
+        for m in matches:
+            try:
+                out.extend(self.match_props(m.id, context=context))
+            except Exception:  # noqa: BLE001 — um jogo ruim não derruba o feed
+                logger.warning("props feed: falha no jogo %s", m.id)
+        out.sort(key=lambda r: (r.model_prob or 0), reverse=True)
+        out = out[:limit]
+        self._disk.set(key, [r.model_dump(mode="json") for r in out],
+                       config.MATCHES_CACHE_TTL)
+        return out
 
     def leagues(self) -> list[LeagueSchema]:
         # Catálogo quase estático — cache longo (a busca de ligas faz 1 chamada
@@ -396,6 +813,14 @@ class FootballDataService:
         "assists": lambda p: p.assists,
         "shots": lambda p: p.shots,
         "shots_on_target": lambda p: p.shots_on_target,
+        "key_passes": lambda p: p.key_passes,
+        "dribbles": lambda p: p.dribbles,
+        "tackles": lambda p: p.tackles,
+        "interceptions": lambda p: p.interceptions,
+        "duels_won": lambda p: p.duels_won,
+        "fouls_drawn": lambda p: p.fouls_drawn,
+        "fouls_committed": lambda p: p.fouls_committed,
+        "rating": lambda p: p.rating or 0,
     }
 
     def player_leaders(self, *, context: str = "general",
@@ -421,6 +846,23 @@ class FootballDataService:
         players = self.competition_players(context)
         ranked = sorted(players, key=lambda p: (keyf(p) or 0), reverse=True)
         return ranked[:limit]
+
+    def player_index_ranking(self, *, context: str = "general",
+                             index: str = "iip", limit: int = 20) -> list[PlayerSchema]:
+        """Ranking por índice composto (ipo|icj|id|iip). Calcula sobre o elenco
+        da competição (cacheado) e devolve os jogadores com os índices anexados."""
+        from src.metrics.player_index import compute_indices
+        players = self.competition_players(context)
+        idxs = compute_indices(players)
+        for pi in idxs:
+            pi.player.ipo = pi.ipo
+            pi.player.icj = pi.icj
+            pi.player.idef = pi.id
+            pi.player.iip = pi.iip
+        key = {"ipo": lambda x: x.ipo, "icj": lambda x: x.icj,
+               "id": lambda x: x.id, "iip": lambda x: x.iip}.get(index, lambda x: x.iip)
+        idxs.sort(key=key, reverse=True)
+        return [pi.player for pi in idxs[:limit]]
 
     def odds_board(self, *, league_id: Optional[int] = None,
                    market: Optional[str] = None) -> list[OddsBoardItemSchema]:

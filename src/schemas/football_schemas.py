@@ -155,6 +155,18 @@ class ContextSchema(BaseModel):
     features: list[str] = []
 
 
+class MarketLineSchema(BaseModel):
+    """Uma seleção de mercado com probabilidade do modelo + valor (se há odd)."""
+    market: str
+    selection: str
+    line: Optional[float] = None
+    model_prob: float
+    fair_odd: float
+    odd: Optional[float] = None
+    edge: Optional[float] = None
+    confidence: Optional[float] = None
+
+
 # ─── Jogadores ───────────────────────────────────────────────────────────
 class PlayerSchema(BaseModel):
     id: int
@@ -162,6 +174,8 @@ class PlayerSchema(BaseModel):
     team: Optional[str] = None
     team_id: Optional[int] = None
     position: Optional[str] = None
+    number: Optional[int] = None      # número da camisa
+    appearances: int = 0
     goals: int = 0
     assists: int = 0
     xg: Optional[float] = None
@@ -172,6 +186,27 @@ class PlayerSchema(BaseModel):
     yellow_cards: Optional[int] = None
     red_cards: Optional[int] = None
     status: Optional[str] = None
+    # ── Parâmetros analíticos extra ───────────────────────────────────────
+    rating: Optional[float] = None
+    key_passes: int = 0
+    passes: int = 0
+    pass_accuracy: Optional[float] = None
+    dribbles: int = 0
+    dribbles_attempts: int = 0
+    tackles: int = 0
+    interceptions: int = 0
+    duels: int = 0
+    duels_won: int = 0
+    fouls_drawn: int = 0
+    fouls_committed: int = 0
+    penalty_scored: int = 0
+    goals_per90: float = 0.0
+    shots_per90: float = 0.0
+    # Índices compostos (0–100) — preenchidos no ranking por índice.
+    ipo: Optional[float] = None
+    icj: Optional[float] = None
+    idef: Optional[float] = None
+    iip: Optional[float] = None
 
 
 # ─── Estatísticas de partida (tela de análise) ───────────────────────────
@@ -263,6 +298,11 @@ class RecommendationOut(BaseModel):
     context: str = "general"
     stage: Optional[str] = None
     group: Optional[str] = None
+    # Kickoff do jogo (ISO) — usado pra agrupar/ordenar por jogo no front.
+    kickoff: Optional[str] = None
+    # Props de jogador: time do jogador + número da camisa (descrição melhor).
+    team: Optional[str] = None
+    player_number: Optional[int] = None
 
 
 # ─── Entradas ao vivo (analista) ─────────────────────────────────────────

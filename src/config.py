@@ -137,6 +137,26 @@ MIN_ODD: float = float(os.getenv("MIN_ODD", "1.30"))
 MAX_ODD: float = float(os.getenv("MAX_ODD", "8.0"))
 # Confiança mínima (0-100) pra recomendar.
 MIN_CONFIDENCE: float = float(os.getenv("MIN_CONFIDENCE", "40"))
+# Teto de edge: acima disso é quase certamente ERRO do modelo (não valor real),
+# então filtramos. Mercado de futebol raramente tem edge real > ~15%.
+MAX_EDGE: float = float(os.getenv("MAX_EDGE", "0.15"))
+# Peso do MODELO no blend com o mercado (0=só mercado, 1=só modelo). O mercado
+# de odds é eficiente; o modelo entra como um ajuste, não pra sobrepor.
+MODEL_MARKET_BLEND: float = float(os.getenv("MODEL_MARKET_BLEND", "0.40"))
+
+# ---------------------------------------------------------------------------
+# Ratings de força de seleção (priors do modelo em torneios)
+# ---------------------------------------------------------------------------
+# Em torneios (Copa), a amostra de jogos do próprio torneio é minúscula (0-2),
+# então o modelo regride tudo à média e subvaloriza favoritos. Solução: derivar
+# ratings ataque/defesa AJUSTADOS POR ADVERSÁRIO do histórico recente de cada
+# seleção (qualifiers, amistosos, Nations League) via api-football.
+# Nº de jogos recentes (todas as competições) buscados por seleção.
+RATINGS_RECENT_N: int = int(os.getenv("RATINGS_RECENT_N", "15"))
+# Iterações do ponto-fixo ataque/defesa (converge rápido).
+RATINGS_ITERATIONS: int = int(os.getenv("RATINGS_ITERATIONS", "12"))
+# Vantagem de casa em torneio (1.0 = neutro; sede compartilhada/neutra).
+TOURNAMENT_HOME_ADV: float = float(os.getenv("TOURNAMENT_HOME_ADV", "1.0"))
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -146,7 +166,24 @@ CACHE_DIR: str = os.getenv("CACHE_DIR", "/tmp")
 # devagar fora do jogo ao vivo.
 MATCHES_CACHE_TTL: int = int(os.getenv("MATCHES_CACHE_TTL", "900"))      # 15 min
 STATS_CACHE_TTL: int = int(os.getenv("STATS_CACHE_TTL", str(6 * 3600)))  # 6 h
+# TTL do 1x2 inline em lote (sport_odds bulk, barato).
 ODDS_CACHE_TTL: int = int(os.getenv("ODDS_CACHE_TTL", "120"))
+# TTL das odds POR JOGO (event_odds, caro: markets×regions por jogo). Pré-jogo
+# elas andam devagar → TTL longo economiza muito. Ao vivo, o worker invalida
+# por EVENTO (gol); o TTL_LIVE é só fallback quando nada acontece.
+ODDS_PREMATCH_TTL: int = int(os.getenv("ODDS_PREMATCH_TTL", "900"))      # 15 min
+ODDS_LIVE_TTL: int = int(os.getenv("ODDS_LIVE_TTL", "600"))             # 10 min
+
+# ---------------------------------------------------------------------------
+# Worker de odds ao vivo (refresh por evento)
+# ---------------------------------------------------------------------------
+# Detecta gols via 1 chamada agregada barata (fixtures?live=all) e só então
+# reaquece as odds do jogo — em vez de re-buscar tudo a cada N minutos.
+ENABLE_LIVE_ODDS_WORKER: bool = _flag("ENABLE_LIVE_ODDS_WORKER", "0")
+LIVE_ODDS_POLL_SECONDS: int = int(os.getenv("LIVE_ODDS_POLL_SECONDS", "90"))
+# Janela após o kickoff em que um jogo é considerado "possivelmente ao vivo".
+# Fora dela o worker nem chama a api-football (economia off-hours).
+LIVE_WINDOW_HOURS: float = float(os.getenv("LIVE_WINDOW_HOURS", "3.0"))
 # Catálogos quase estáticos (ligas) — cache longo, economiza muita chamada.
 CATALOG_CACHE_TTL: int = int(os.getenv("CATALOG_CACHE_TTL", str(24 * 3600)))
 

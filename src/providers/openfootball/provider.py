@@ -290,6 +290,20 @@ class OpenFootballProvider:
             recent_form="".join(reversed(form[-5:])),
         )
 
+    def get_recent_results(self, team_id: int, last_n: int = 15) -> list[Match]:
+        """Resultados do time no torneio (openfootball não tem histórico fora
+        dele). Pouco sinal — só os jogos da própria Copa já finalizados."""
+        played = [
+            m for m in self._matches(self._season)
+            if m.status == "finished" and m.home_goals is not None
+            and team_id in (m.home_team.id, m.away_team.id)
+        ]
+        return played[:last_n]
+
+    def get_live_matches(self) -> list[Match]:
+        """openfootball é estático (sem tempo real) — nunca há jogo ao vivo."""
+        return []
+
     def get_leagues(self) -> list[League]:
         data = self._payload(self._season)
         return [League(id=config.WORLD_CUP_LEAGUE_ID, name=data.get("name", "World Cup"),

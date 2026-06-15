@@ -105,6 +105,7 @@ class PlayerSeasonStats:
     name: str
     team_id: int
     position: str = ""
+    number: Optional[int] = None     # número da camisa (vem do elenco/squad)
     appearances: int = 0
     minutes: int = 0
     goals: int = 0
@@ -113,6 +114,23 @@ class PlayerSeasonStats:
     shots_on_target: float = 0.0
     xg: Optional[float] = None
     xa: Optional[float] = None
+    # ── Parâmetros analíticos extra (api-football) ────────────────────────
+    rating: Optional[float] = None        # nota média
+    key_passes: int = 0                   # passes que viram finalização
+    passes: int = 0
+    pass_accuracy: Optional[float] = None
+    dribbles: int = 0                     # dribles certos
+    dribbles_attempts: int = 0
+    tackles: int = 0
+    interceptions: int = 0
+    duels: int = 0
+    duels_won: int = 0
+    fouls_drawn: int = 0                  # faltas sofridas
+    fouls_committed: int = 0              # faltas cometidas
+    yellow_cards: int = 0
+    red_cards: int = 0
+    penalty_scored: int = 0
+    team_name: str = ""
 
     @property
     def goals_per90(self) -> float:
@@ -237,6 +255,16 @@ class FootballDataProvider(Protocol):
     def get_team(self, team_id: int) -> Optional[Team]: ...
 
     def get_team_form(self, team_id: int, last_n: int = 10) -> Optional[TeamForm]: ...
+
+    def get_recent_results(self, team_id: int, last_n: int = 15) -> list[Match]:
+        """Últimos N jogos FINALIZADOS do time, em TODAS as competições (base dos
+        ratings de força). Vazio quando a fonte não suporta."""
+        ...
+
+    def get_live_matches(self) -> list[Match]:
+        """TODOS os jogos ao vivo agora, numa única chamada barata (base do
+        refresh de odds por evento). Vazio quando a fonte não suporta."""
+        ...
 
     def get_player(self, player_id: int) -> Optional[PlayerSeasonStats]: ...
 

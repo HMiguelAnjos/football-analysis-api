@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 _football = _UNSET       # provider do contexto geral
 _football_wc = _UNSET    # provider do contexto Copa do Mundo
-_odds = _UNSET
 _xg = _UNSET
 
 
@@ -80,32 +79,34 @@ def get_football_provider(context: str = "general") -> FootballDataProvider:
     return _football
 
 
-def get_odds_provider() -> Optional[OddsProvider]:
-    global _odds
-    if _odds is not _UNSET:
-        return _odds
+_odds_by_ctx: dict[str, Optional[OddsProvider]] = {}
+
+
+def _build_odds(context: str) -> Optional[OddsProvider]:
+    from src import competition
     choice = "fixtures" if config.USE_FIXTURES else config.ODDS_PROVIDER
     if choice == "fixtures":
-        _odds = fixtures
-        logger.info("OddsProvider: fixtures (offline)")
-        return _odds
+        logger.info("OddsProvider[%s]: fixtures (offline)", context)
+        return fixtures
     if choice == "the_odds_api" and config.ODDS_API_KEY:
         try:
             from src.providers.odds.provider import TheOddsApiProvider
-            _odds = TheOddsApiProvider()
-            logger.info("OddsProvider: the_odds_api")
-            return _odds
+            cfg = competition.resolve(context)
+            logger.info("OddsProvider[%s]: the_odds_api (%s)", context, cfg.odds_sport_keys)
+            return TheOddsApiProvider(
+                sport_keys=cfg.odds_sport_keys, bookmakers=config.ODDS_BOOKMAKERS,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("the_odds_api indisponível (%s) — odds DESATIVADAS", exc)
-            _odds = None
-            return _odds
-    # "none", ou the_odds_api sem chave → odds desativadas (só api-football).
-    if choice == "the_odds_api":
-        logger.info("OddsProvider: DESATIVADO (sem ODDS_API_KEY) — rodando só com api-football")
-    else:
-        logger.info("OddsProvider: DESATIVADO (ODDS_PROVIDER=%s)", choice)
-    _odds = None
-    return _odds
+            return None
+    logger.info("OddsProvider[%s]: DESATIVADO (ODDS_PROVIDER=%s)", context, choice)
+    return None
+
+
+def get_odds_provider(context: str = "general") -> Optional[OddsProvider]:
+    if context not in _odds_by_ctx:
+        _odds_by_ctx[context] = _build_odds(context)
+    return _odds_by_ctx[context]
 
 
 def get_xg_provider() -> Optional[XgProvider]:
@@ -132,5 +133,6 @@ def get_xg_provider() -> Optional[XgProvider]:
 
 def reset() -> None:
     """Zera os singletons — usado em testes pra trocar config/providers."""
-    global _football, _football_wc, _odds, _xg
-    _football = _football_wc = _odds = _xg = _UNSET
+    global _football, _football_wc, _xg
+    _football = _football_wc = _xg = _UNSET
+    _odds_by_ctx.clear()

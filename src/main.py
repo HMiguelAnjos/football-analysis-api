@@ -41,6 +41,7 @@ from src.schemas.football_schemas import (
     LivePickCreate,
     LivePickOut,
     LivePickUpdate,
+    MarketLineSchema,
     MatchListResponse,
     MatchOddsSchema,
     MatchSchema,
@@ -122,6 +123,13 @@ async def lifespan(app: FastAPI):
             await start_settlement_worker()
         except Exception as exc:  # noqa: BLE001
             logger.warning("settlement worker não subiu (%s)", exc)
+
+    if config.ENABLE_LIVE_ODDS_WORKER:
+        try:
+            from src.workers.live_odds_worker import start_live_odds_worker
+            await start_live_odds_worker()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("live odds worker não subiu (%s)", exc)
     yield
 
 
@@ -386,6 +394,26 @@ def match_odds(match_id: int):
     return o
 
 
+@app.get("/football/matches/{match_id}/markets", response_model=list[MarketLineSchema])
+def match_markets(match_id: int):
+    return data_service.match_markets(match_id)
+
+
+@app.get("/football/matches/{match_id}/props", response_model=list[RecommendationOut])
+def match_props(match_id: int):
+    return data_service.match_props(match_id)
+
+
+@app.get("/football/props", response_model=list[RecommendationOut])
+def props_feed(limit: int = Query(40, ge=1, le=100)):
+    """Feed global de player props (artilheiro, chutes no gol) dos próximos jogos."""
+    try:
+        return data_service.props(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("props feed falhou: %s", exc)
+        return []
+
+
 @app.get("/football/leagues", response_model=list[LeagueSchema])
 def leagues():
     return data_service.leagues()
@@ -407,7 +435,8 @@ def team_detail(team_id: int):
     return t
 
 
-_LEADER_METRIC = "^(goals|assists|shots|shots_on_target)$"
+_LEADER_METRIC = ("^(goals|assists|shots|shots_on_target|key_passes|dribbles|"
+                  "tackles|interceptions|duels_won|fouls_drawn|fouls_committed|rating)$")
 
 
 @app.get("/football/players", response_model=list[PlayerSchema])
@@ -426,6 +455,29 @@ def players_leaders(
     """Ranking de jogadores por métrica (gols, assistências, chutes, chutes no
     gol) na competição/temporada do contexto."""
     return data_service.player_leaders(metric=metric, limit=limit)
+
+
+_INDEX_METRIC = "^(ipo|icj|id|iip)$"
+
+
+@app.get("/football/players/index", response_model=list[PlayerSchema])
+def players_index(
+    index: str = Query("iip", pattern=_INDEX_METRIC),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Ranking por índice composto: IPO (periculosidade ofensiva), ICJ (criação),
+    ID (defensivo) ou IIP (influência na partida) — escala 0–100."""
+    return data_service.player_index_ranking(index=index, limit=limit)
+
+
+@app.post("/football/players/populate")
+def players_populate(
+    _user=Depends(require_permission(MANAGE_RECOMMENDATIONS)),
+    db: Session = Depends(get_db),
+):
+    """Popula a tabela football_players (stats + índices). Admin/analyst."""
+    from src.services.players_service import populate_players
+    return populate_players(db, data_service)
 
 
 @app.get("/football/players/{player_id}", response_model=PlayerSchema)
@@ -469,6 +521,16 @@ def recommendations_active(
         return []
 
 
+@app.get("/football/recommendations/opportunities", response_model=list[RecommendationOut])
+def recommendations_opportunities(limit: int = Query(30, ge=1, le=100)):
+    """Melhores apostas de valor (1X2) dos jogos próximos — ao vivo, sem banco."""
+    try:
+        return data_service.opportunities(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("opportunities falhou: %s", exc)
+        return []
+
+
 @app.get("/football/recommendations/live", response_model=list[LivePickOut])
 def recommendations_live(db: Session = Depends(get_db), limit: int = Query(50, ge=1, le=200)):
     """Entradas ao vivo publicadas por analistas (source=analyst, ativas)."""
@@ -496,6 +558,9 @@ def recommendations_generate(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Erro ao gerar recomendações: {exc}")
+    if body.persist:
+        recs = rec_svc.list_recommendations(db, only_active=True, limit=200)
+        return [front_mappers.rec_to_out(r) for r in recs]
     return [front_mappers.candidate_to_out(c) for c in result["candidates"]]
 
 
@@ -638,6 +703,26 @@ def wc_match_odds(match_id: int):
     return o
 
 
+@wc.get("/matches/{match_id}/markets", response_model=list[MarketLineSchema])
+def wc_match_markets(match_id: int):
+    return data_service.match_markets(match_id, context=_WC)
+
+
+@wc.get("/matches/{match_id}/props", response_model=list[RecommendationOut])
+def wc_match_props(match_id: int):
+    return data_service.match_props(match_id, context=_WC)
+
+
+@wc.get("/props", response_model=list[RecommendationOut])
+def wc_props_feed(limit: int = Query(40, ge=1, le=100)):
+    """Feed global de player props da Copa (artilheiro, chutes no gol)."""
+    try:
+        return data_service.props(context=_WC, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wc props feed falhou: %s", exc)
+        return []
+
+
 @wc.get("/groups", response_model=list[GroupSchema])
 def wc_groups():
     return data_service.groups(context=_WC)
@@ -670,9 +755,27 @@ def wc_players_leaders(
     return data_service.player_leaders(context=_WC, metric=metric, limit=limit)
 
 
+@wc.get("/players/index", response_model=list[PlayerSchema])
+def wc_players_index(
+    index: str = Query("iip", pattern=_INDEX_METRIC),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Ranking da Copa por índice composto (IPO/ICJ/ID/IIP, 0–100)."""
+    return data_service.player_index_ranking(context=_WC, index=index, limit=limit)
+
+
 @wc.get("/players", response_model=list[PlayerSchema])
 def wc_players(search: str | None = Query(None)):
     return data_service.players(search=search, context=_WC)
+
+
+@wc.post("/players/populate")
+def wc_players_populate(
+    _user=Depends(require_permission(MANAGE_RECOMMENDATIONS)),
+    db: Session = Depends(get_db),
+):
+    from src.services.players_service import populate_players
+    return populate_players(db, data_service, context=_WC)
 
 
 @wc.get("/recommendations", response_model=list[RecommendationOut])
@@ -689,6 +792,15 @@ def wc_recommendations(
         return [front_mappers.rec_to_out(r) for r in recs]
     except Exception as exc:  # noqa: BLE001
         logger.warning("wc recommendations indisponível (DB?): %s", exc)
+        return []
+
+
+@wc.get("/recommendations/opportunities", response_model=list[RecommendationOut])
+def wc_opportunities(limit: int = Query(30, ge=1, le=100)):
+    try:
+        return data_service.opportunities(context=_WC, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wc opportunities falhou: %s", exc)
         return []
 
 
@@ -716,6 +828,9 @@ def wc_generate(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Erro ao gerar recomendações: {exc}")
+    if body.persist:
+        recs = rec_svc.list_recommendations(db, context=_WC, only_active=True, limit=200)
+        return [front_mappers.rec_to_out(r) for r in recs]
     return [front_mappers.candidate_to_out(c) for c in result["candidates"]]
 
 

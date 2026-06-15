@@ -61,7 +61,7 @@ def rec_to_out(rec: FootballRecommendation) -> RecommendationOut:
     return RecommendationOut(
         id=rec.id, match=_match_label(rec), match_id=rec.match_id,
         league=rec.league or None, market=rec.market, selection=rec.selection,
-        line=rec.line, odd=rec.odd, fair_odd=rec.fair_odd,
+        line=rec.line, odd=rec.odd or None, fair_odd=rec.fair_odd,
         model_prob=rec.model_probability, implied_prob=rec.implied_probability,
         edge=edge, confidence=confidence_label(rec.confidence_score),
         status=_REC_STATUS.get(rec.status, rec.status),
@@ -86,6 +86,20 @@ def candidate_to_out(c) -> RecommendationOut:
         status="pending", reason=c.recommendation_reason or None,
         bookmaker=c.bookmaker, created_at="",
         stage=c.stage, group=c.group,
+    )
+
+
+def prop_to_out(pick, match) -> RecommendationOut:
+    """PropPick (projeção de player prop) → schema do front."""
+    return RecommendationOut(
+        id=0, match=f"{match.home_team.name} x {match.away_team.name}",
+        match_id=match.id, league=match.league_name or None, market=pick.market,
+        selection=pick.selection, line=pick.line, odd=None, fair_odd=pick.fair_odd,
+        model_prob=pick.model_probability, implied_prob=None, edge=None,
+        confidence=confidence_label(pick.confidence_score), status="pending",
+        reason=pick.recommendation_reason, bookmaker=None, created_at="",
+        stage=match.stage, group=match.group, kickoff=_iso(match.utc_kickoff),
+        team=pick.team, player_number=pick.number,
     )
 
 

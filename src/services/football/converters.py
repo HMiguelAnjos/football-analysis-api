@@ -190,10 +190,20 @@ def league_to_schema(
 
 def player_to_schema(p: PlayerSeasonStats, *, team_name: Optional[str] = None) -> PlayerSchema:
     return PlayerSchema(
-        id=p.player_id, name=p.name, team=team_name, team_id=p.team_id or None,
-        position=p.position or None, goals=p.goals, assists=p.assists,
+        id=p.player_id, name=p.name, team=team_name or (p.team_name or None),
+        team_id=p.team_id or None, position=p.position or None, number=p.number,
+        appearances=p.appearances, goals=p.goals, assists=p.assists,
         xg=p.xg, xa=p.xa, shots=p.shots, shots_on_target=p.shots_on_target,
-        minutes=p.minutes,
+        minutes=p.minutes, yellow_cards=p.yellow_cards or None,
+        red_cards=p.red_cards or None, rating=p.rating,
+        key_passes=p.key_passes, passes=p.passes, pass_accuracy=p.pass_accuracy,
+        dribbles=p.dribbles, dribbles_attempts=p.dribbles_attempts,
+        tackles=p.tackles, interceptions=p.interceptions,
+        duels=p.duels, duels_won=p.duels_won,
+        fouls_drawn=p.fouls_drawn, fouls_committed=p.fouls_committed,
+        penalty_scored=p.penalty_scored,
+        goals_per90=round(p.goals_per90, 3),
+        shots_per90=round(p.shots_per90, 3),
     )
 
 

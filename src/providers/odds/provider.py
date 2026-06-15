@@ -68,6 +68,29 @@ class TheOddsApiProvider:
         self._client = client
         self._sport_keys = sport_keys or config.ODDS_SPORT_KEYS
         self._bookmakers = bookmakers or config.ODDS_BOOKMAKERS
+        # Cache em memória por sport key (corta list_events/sport_odds repetidos).
+        self._ev_cache: dict[str, tuple[list, float]] = {}
+        self._h2h_cache: dict[str, tuple[list, float]] = {}
+
+    def _events_for(self, sport: str, ttl: float = 6 * 3600) -> list:
+        import time as _t
+        hit = self._ev_cache.get(sport)
+        if hit and (_t.monotonic() - hit[1]) < ttl:
+            return hit[0]
+        evs = self._client.list_events(sport)
+        self._ev_cache[sport] = (evs, _t.monotonic())
+        return evs
+
+    def _h2h_for_sport(self, sport: str, ttl: float = 180.0) -> list:
+        import time as _t
+        hit = self._h2h_cache.get(sport)
+        if hit and (_t.monotonic() - hit[1]) < ttl:
+            return hit[0]
+        evs = self._client.sport_odds(
+            sport=sport, markets=["h2h"], bookmakers=self._bookmakers or None,
+        )
+        self._h2h_cache[sport] = (evs, _t.monotonic())
+        return evs
 
     def get_match_odds(self, match: Match) -> Optional[MatchOdds]:
         event = self._resolve_event(match)
@@ -91,9 +114,7 @@ class TheOddsApiProvider:
         # Junta todos os eventos h2h dos sport keys num índice.
         events: list[dict] = []
         for sport in self._sport_keys:
-            events.extend(self._client.sport_odds(
-                sport=sport, markets=["h2h"], bookmakers=self._bookmakers or None,
-            ))
+            events.extend(self._h2h_for_sport(sport))
         out: dict[int, dict[str, float]] = {}
         for m in matches:
             ev = next(
@@ -134,7 +155,7 @@ class TheOddsApiProvider:
     def _resolve_event(self, match: Match) -> Optional[tuple[str, str]]:
         """Varre os sport keys e acha o evento cujos times batem com o jogo."""
         for sport in self._sport_keys:
-            for ev in self._client.list_events(sport):
+            for ev in self._events_for(sport):
                 if (
                     _name_matches(ev.get("home_team", ""), match.home_team.name)
                     and _name_matches(ev.get("away_team", ""), match.away_team.name)

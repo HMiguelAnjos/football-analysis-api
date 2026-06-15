@@ -337,26 +337,66 @@ class ApiFootballProvider:
 
         appearances = minutes = goals = assists = 0
         shots = sot = 0.0
+        key_passes = passes = dribbles = dribbles_att = 0
+        tackles = interceptions = duels = duels_won = 0
+        fouls_drawn = fouls_committed = yellow = red = pen_scored = 0
+        ratings: list[float] = []
+        acc: list[float] = []
         position = ""
         team_id = default_team
+        team_name = ""
         for st in stats_list:
             games = st.get("games", {}) or {}
             gl = st.get("goals", {}) or {}
             sh = st.get("shots", {}) or {}
+            ps = st.get("passes", {}) or {}
+            tk = st.get("tackles", {}) or {}
+            du = st.get("duels", {}) or {}
+            dr = st.get("dribbles", {}) or {}
+            fl = st.get("fouls", {}) or {}
+            cd = st.get("cards", {}) or {}
+            pen = st.get("penalty", {}) or {}
             appearances += _i(games.get("appearences"))
             minutes += _i(games.get("minutes"))
             goals += _i(gl.get("total"))
             assists += _i(gl.get("assists"))
             shots += _f(sh.get("total"))
             sot += _f(sh.get("on"))
+            key_passes += _i(ps.get("key"))
+            passes += _i(ps.get("total"))
+            dribbles += _i(dr.get("success"))
+            dribbles_att += _i(dr.get("attempts"))
+            tackles += _i(tk.get("total"))
+            interceptions += _i(tk.get("interceptions"))
+            duels += _i(du.get("total"))
+            duels_won += _i(du.get("won"))
+            fouls_drawn += _i(fl.get("drawn"))
+            fouls_committed += _i(fl.get("committed"))
+            yellow += _i(cd.get("yellow"))
+            red += _i(cd.get("red")) + _i(cd.get("yellowred"))
+            pen_scored += _i(pen.get("scored"))
+            r = _f(games.get("rating"))
+            if r > 0:
+                ratings.append(r)
+            a = _f(ps.get("accuracy"))
+            if a > 0:
+                acc.append(a)
             position = position or (games.get("position", "") or "")
             team = st.get("team", {}) or {}
             if not team_id:
                 team_id = int(team.get("id", 0) or 0)
+            team_name = team_name or (team.get("name", "") or "")
         return PlayerSeasonStats(
             player_id=pid, name=player.get("name", ""), team_id=team_id,
-            position=position, appearances=appearances, minutes=minutes,
-            goals=goals, assists=assists, shots=shots, shots_on_target=sot,
+            team_name=team_name, position=position, appearances=appearances,
+            minutes=minutes, goals=goals, assists=assists, shots=shots,
+            shots_on_target=sot, key_passes=key_passes, passes=passes,
+            pass_accuracy=round(sum(acc) / len(acc), 1) if acc else None,
+            dribbles=dribbles, dribbles_attempts=dribbles_att, tackles=tackles,
+            interceptions=interceptions, duels=duels, duels_won=duels_won,
+            fouls_drawn=fouls_drawn, fouls_committed=fouls_committed,
+            yellow_cards=yellow, red_cards=red, penalty_scored=pen_scored,
+            rating=round(sum(ratings) / len(ratings), 2) if ratings else None,
         )
 
     def get_top_scorers(self, league_id: int, season: int) -> list[PlayerSeasonStats]:
@@ -407,6 +447,60 @@ class ApiFootballProvider:
         if not isinstance(stats, dict) or not stats:
             return None
         return self.parse_team_form(team_id, stats)
+
+    def get_recent_results(self, team_id: int, last_n: int = 15) -> list[Match]:
+        """Últimos N jogos do time em TODAS as competições (1 chamada barata).
+        Filtra finalizados — base dos ratings de força ajustados por adversário."""
+        items = self._client.response("fixtures", {"team": team_id, "last": last_n})
+        out: list[Match] = []
+        for it in items:
+            m = self.parse_match(it)
+            if m is not None and m.status == "finished" \
+                    and m.home_goals is not None and m.away_goals is not None:
+                out.append(m)
+        return out
+
+    def get_live_matches(self) -> list[Match]:
+        """Todos os jogos ao vivo agora (1 chamada: fixtures?live=all). Base do
+        refresh de odds por evento — barato, cobre o mundo inteiro de uma vez."""
+        items = self._client.response("fixtures", {"live": "all"})
+        out: list[Match] = []
+        for it in items:
+            m = self.parse_match(it)
+            if m is not None and m.status == "live":
+                out.append(m)
+        return out
+
+    def get_squad(self, team_id: int) -> list[PlayerSeasonStats]:
+        """Elenco atual do time (só id/nome/posição, SEM stats — 1 chamada).
+        Base pra montar props ANTES do time jogar no torneio."""
+        items = self._client.response("players/squads", {"team": team_id})
+        out: list[PlayerSeasonStats] = []
+        if items:
+            for p in items[0].get("players", []) or []:
+                pid = int(p.get("id", 0) or 0)
+                if not pid:
+                    continue
+                num = p.get("number")
+                try:
+                    num = int(num) if num is not None else None
+                except (TypeError, ValueError):
+                    num = None
+                out.append(PlayerSeasonStats(
+                    player_id=pid, name=p.get("name", "") or "",
+                    team_id=team_id, position=p.get("position", "") or "",
+                    number=num,
+                ))
+        return out
+
+    def get_player_season(self, player_id: int,
+                          season: int) -> Optional[PlayerSeasonStats]:
+        """Stats de UM jogador na temporada, AGREGADAS por todas as competições
+        (clube + seleção). É a taxa de chute/gol usada nas props pré-jogo."""
+        items = self._client.response("players", {"id": player_id, "season": season})
+        if not items:
+            return None
+        return self._parse_player_block(items[0])
 
     def get_player(self, player_id: int) -> Optional[PlayerSeasonStats]:
         items = self._client.response("players", {
