@@ -1,0 +1,1 @@
+"""Provider api-football."""

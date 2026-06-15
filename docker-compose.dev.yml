@@ -1,0 +1,19 @@
+# Postgres local pra a área logada + persistência de recomendações.
+# Uso:
+#   docker compose -f docker-compose.dev.yml up -d
+#   export DATABASE_URL=postgresql+psycopg2://football:football@localhost:5432/football
+#   uvicorn src.main:app --reload
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: football
+      POSTGRES_PASSWORD: football
+      POSTGRES_DB: football
+    ports:
+      - "5432:5432"
+    volumes:
+      - football_pgdata:/var/lib/postgresql/data
+
+volumes:
+  football_pgdata:
