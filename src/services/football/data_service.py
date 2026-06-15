@@ -637,9 +637,10 @@ class FootballDataService:
     # Posições do elenco que valem props de finalização/gol (poupa chamadas:
     # goleiro/zagueiro raramente viram pick de chute/artilheiro).
     _PROP_POSITIONS = ("Attacker", "Midfielder")
-    # Teto de jogadores enriquecidos por time (squad vem ordenado) — limita o
-    # custo de API. generate_player_props já pega só o top N por chute/gol.
-    _SQUAD_ENRICH_CAP = 12
+    # Teto de jogadores enriquecidos por time — limita o custo de API.
+    # 16 (com atacantes priorizados) cobre todos os atacantes + meias-chave
+    # (ex.: De Bruyne). generate_player_props já pega só o top N por chute/gol.
+    _SQUAD_ENRICH_CAP = 16
 
     def _player_season_cached(self, player_id: int, season: int, context: str):
         """Stats de temporada de um jogador (clube+seleção agregadas), cacheadas
@@ -668,8 +669,9 @@ class FootballDataService:
     def team_player_pool(self, team_id: int, context: str = "general") -> list[PlayerSchema]:
         """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção) —
         base das props ANTES do time jogar no torneio. Cacheado por time."""
-        # ":n1" = inclui número da camisa no pool (invalida cache antigo sem nº).
-        key = f"{_CACHE_V}:squadpool:n1:{context}:{team_id}:{config.CURRENT_SEASON}"
+        # ":n2" = atacantes priorizados no pool (corrige estrelas — Salah/Lukaku —
+        # sendo cortadas pelo teto por virem no fim do elenco).
+        key = f"{_CACHE_V}:squadpool:n2:{context}:{team_id}:{config.CURRENT_SEASON}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
@@ -683,6 +685,10 @@ class FootballDataService:
                 logger.warning("props: falha buscando elenco do time %s", team_id)
                 squad = []
             relevant = [s for s in squad if s.position in self._PROP_POSITIONS]
+            # O elenco vem ordenado por posição (GK→DEF→MID→ATT), com os
+            # atacantes no FIM. Sem priorizar, o teto cortava justamente os
+            # finalizadores (Salah idx 25). Atacantes primeiro, meias depois.
+            relevant.sort(key=lambda s: 0 if s.position == "Attacker" else 1)
             for sp in relevant[: self._SQUAD_ENRICH_CAP]:
                 stats = self._player_season_cached(sp.player_id, config.CURRENT_SEASON, context)
                 if stats is None or stats.appearances <= 0:
@@ -723,8 +729,8 @@ class FootballDataService:
         """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador)."""
-        # ":n2" = só jogos não iniciados (invalida feed antigo que incluía in-play).
-        key = f"{_CACHE_V}:propsfeed:n2:{context}:{limit}:{max_matches}"
+        # ":n3" = pool com atacantes priorizados (Salah/Lukaku) + só jogos futuros.
+        key = f"{_CACHE_V}:propsfeed:n3:{context}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]
