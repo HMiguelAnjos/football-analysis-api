@@ -531,6 +531,16 @@ def recommendations_opportunities(limit: int = Query(30, ge=1, le=100)):
         return []
 
 
+@app.get("/football/live-opportunities", response_model=list[RecommendationOut])
+def live_opportunities(limit: int = Query(30, ge=1, le=100)):
+    """Picks de valor AO VIVO (modelo in-play × odd ao vivo)."""
+    try:
+        return data_service.live_opportunities(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("live opportunities falhou: %s", exc)
+        return []
+
+
 @app.get("/football/recommendations/live", response_model=list[LivePickOut])
 def recommendations_live(db: Session = Depends(get_db), limit: int = Query(50, ge=1, le=200)):
     """Entradas ao vivo publicadas por analistas (source=analyst, ativas)."""
@@ -720,6 +730,16 @@ def wc_props_feed(limit: int = Query(40, ge=1, le=100)):
         return data_service.props(context=_WC, limit=limit)
     except Exception as exc:  # noqa: BLE001
         logger.warning("wc props feed falhou: %s", exc)
+        return []
+
+
+@wc.get("/live-opportunities", response_model=list[RecommendationOut])
+def wc_live_opportunities(limit: int = Query(30, ge=1, le=100)):
+    """Picks de valor AO VIVO da Copa (modelo in-play × odd ao vivo)."""
+    try:
+        return data_service.live_opportunities(context=_WC, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wc live opportunities falhou: %s", exc)
         return []
 
 

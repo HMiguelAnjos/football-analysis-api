@@ -634,6 +634,110 @@ class FootballDataService:
             context=context,
         )
 
+    def live_opportunities(self, *, context: str = "general", limit: int = 30,
+                           min_edge: Optional[float] = None,
+                           min_odd: Optional[float] = None,
+                           max_odd: Optional[float] = None):
+        """Picks de VALOR AO VIVO: modelo IN-PLAY (placar+minuto) × odd ao vivo.
+
+        Diferente das oportunidades pré-jogo, aqui a probabilidade vem do estado
+        atual do jogo (gols que ainda faltam + placar). Mesma calibração:
+        de-vig + blend modelo×mercado + teto MAX_EDGE. Sem banco."""
+        import statistics as _st
+        from collections import defaultdict
+
+        from src.probability import inplay_market_probs, remove_vig
+        from src.providers.base import TeamForm
+
+        min_edge = config.MIN_EDGE if min_edge is None else min_edge
+        min_odd = config.MIN_ODD if min_odd is None else min_odd
+        max_odd = config.MAX_ODD if max_odd is None else max_odd
+
+        out: list[RecommendationOut] = []
+        for m in self.live_matches(context):
+            if m.home_goals is None or m.away_goals is None:
+                continue
+            odds = self.match_odds_domain(m, context=context)
+            if odds is None or not odds.markets:
+                continue
+            hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
+            af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+            lh, la = self._lambdas(m, hf, af, context)
+            probs = inplay_market_probs(lh, la, m.minute, m.home_goals,
+                                        m.away_goals, ou_lines=(2.5,))
+            sample = min(hf.matches_played, af.matches_played)
+
+            odd_map: dict[tuple, list[float]] = {}
+            for mk, mo in odds.markets.items():
+                for s in mo.selections:
+                    odd_map.setdefault((mk, s.name, s.line), []).append(s.price)
+
+            # Candidatos (mercado, seleção, linha, prob in-play).
+            cands = [
+                ("1x2", "home", None, probs["home"]),
+                ("1x2", "draw", None, probs["draw"]),
+                ("1x2", "away", None, probs["away"]),
+                ("over_under", "over", 2.5, probs["over_2.5"]),
+                ("over_under", "under", 2.5, probs["under_2.5"]),
+                ("btts", "yes", None, probs["btts_yes"]),
+                ("btts", "no", None, probs["btts_no"]),
+            ]
+            groups: dict[tuple, list] = defaultdict(list)
+            for mk, sel, line, mp in cands:
+                prices = odd_map.get((mk, sel, line))
+                odd = round(_st.mean(prices), 2) if prices else None
+                groups[(mk, line)].append([mk, sel, line, mp, odd])
+
+            for grp in groups.values():
+                godds = [g[4] for g in grp]
+                if not all(godds) or len(godds) < 2:
+                    continue
+                devig = remove_vig(godds)  # prob "justa" do mercado ao vivo
+                for g, mkt_p in zip(grp, devig):
+                    mk, sel, line, model_p, odd = g
+                    final = (config.MODEL_MARKET_BLEND * model_p
+                             + (1 - config.MODEL_MARKET_BLEND) * mkt_p)
+                    ev = final * odd - 1.0
+                    if not (min_edge <= ev <= config.MAX_EDGE):
+                        continue
+                    if not (min_odd <= odd <= max_odd):
+                        continue
+                    out.append(self._live_out(m, mk, sel, line, final, odd, ev, sample, context))
+        out.sort(key=lambda r: r.edge or 0, reverse=True)
+        return out[:limit]
+
+    def _live_out(self, m: Match, market: str, selection: str, line, final: float,
+                  odd: float, ev: float, sample: int, context: str) -> RecommendationOut:
+        """Pick ao vivo calibrado → RecommendationOut (com placar/minuto no motivo)."""
+        from src.probability import confidence_score
+
+        conf = confidence_score(edge_value=ev, model_probability=final,
+                                matches_sample=sample, has_xg=False)
+        if ev >= 0.90 * config.MAX_EDGE:
+            conf = min(conf, 44.0)
+        elif ev >= 0.70 * config.MAX_EDGE:
+            conf = min(conf, 69.0)
+        sel = self._opp_selection(market, selection, line,
+                                  m.home_team.name, m.away_team.name)
+        line_txt = f" {line:g}" if line is not None else ""
+        minute = m.minute if m.minute is not None else 0
+        return RecommendationOut(
+            id=0, match=f"{m.home_team.name} x {m.away_team.name}",
+            match_id=m.id, league=m.league_name or None, market=market,
+            selection=sel, line=line, odd=odd,
+            fair_odd=round(1 / final, 2) if final > 0 else None,
+            model_prob=round(final, 4), implied_prob=round(1 / odd, 4) if odd else None,
+            edge=round(ev, 4), confidence=front_mappers.confidence_label(conf),
+            status="live", reason=(
+                f"AO VIVO {minute}' · {m.home_goals}-{m.away_goals} · "
+                f"estimativa {final*100:.0f}% para {sel}{line_txt} vs odd {odd:.2f}. "
+                f"Valor de {ev*100:+.1f}%."
+            ),
+            bookmaker=None, created_at="", stage=m.stage, group=m.group,
+            kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
+            context=context,
+        )
+
     # Posições do elenco que valem props de finalização/gol (poupa chamadas:
     # goleiro/zagueiro raramente viram pick de chute/artilheiro).
     _PROP_POSITIONS = ("Attacker", "Midfielder")

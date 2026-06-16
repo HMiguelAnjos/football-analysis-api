@@ -7,6 +7,7 @@ from src.probability.edge import (
     implied_probability,
     remove_vig,
 )
+from src.probability.live import inplay_market_probs, remaining_fraction
 from src.probability.poisson import ScoreMatrix, build_score_matrix, poisson_pmf
 from src.probability.ratings import TeamRatings, compute_ratings
 from src.probability.team_strength import LeagueAverages, expected_goals
@@ -19,6 +20,8 @@ __all__ = [
     "LeagueAverages",
     "TeamRatings",
     "compute_ratings",
+    "inplay_market_probs",
+    "remaining_fraction",
     "implied_probability",
     "remove_vig",
     "fair_odd",
