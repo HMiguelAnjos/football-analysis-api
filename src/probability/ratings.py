@@ -68,12 +68,18 @@ class TeamRatings:
         return _clamp_lambda(lam_home), _clamp_lambda(lam_away)
 
 
-def compute_ratings(results: list[Match], *, iterations: int = 12) -> TeamRatings:
+def compute_ratings(results: list[Match], *, iterations: int = 12,
+                    shrink: float = 1.0) -> TeamRatings:
     """Resolve ratings ataque/defesa a partir de resultados finalizados.
 
     `results` pode conter duplicatas (o mesmo jogo vindo do histórico de dois
     times) — deduplicamos por id. Adversários fora do torneio entram como
     parâmetros latentes (servem só pra calibrar os times do torneio).
+
+    `shrink` (0..1) regride os ratings à média 1.0 — evita defesas/ataques
+    extremos (ex.: 0.20) ganhos contra adversários fracos, que esmagavam o
+    total de gols (Under 2.5 em todo jogo). 1.0 = sem encolher; 0.55 = puxa
+    ~45% rumo à média.
     """
     games: list[tuple[int, int, int, int]] = []
     seen: set[int] = set()
@@ -116,5 +122,9 @@ def compute_ratings(results: list[Match], *, iterations: int = 12) -> TeamRating
             den = sum(attack[opp] * avg for opp, _, _ in ms)
             new_defense[t] = _clamp(num / den) if den > 0 else 1.0
         defense = new_defense
+
+    if shrink != 1.0:  # regressão à média 1.0 (corta extremos)
+        attack = {t: 1.0 + (v - 1.0) * shrink for t, v in attack.items()}
+        defense = {t: 1.0 + (v - 1.0) * shrink for t, v in defense.items()}
 
     return TeamRatings(avg=avg, attack=attack, defense=defense)

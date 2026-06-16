@@ -61,6 +61,19 @@ def test_opponent_adjustment_discounts_goals_vs_weak_defenses():
     assert r.defense[5] > r.defense[3]
 
 
+def test_shrink_compresses_extremes_toward_mean():
+    # Time que goleia (ataque alto) + segura (defesa baixa) vs fracos.
+    games = [
+        _match(1, 1, 2, 5, 0), _match(2, 1, 3, 4, 0), _match(3, 1, 2, 6, 0),
+        _match(4, 2, 3, 1, 1), _match(5, 3, 2, 0, 0),
+    ]
+    raw = compute_ratings(games)
+    shrunk = compute_ratings(games, shrink=0.55)
+    # O extremo do time 1 fica mais perto de 1.0 com shrink.
+    assert abs(shrunk.attack[1] - 1.0) < abs(raw.attack[1] - 1.0)
+    assert abs(shrunk.defense[1] - 1.0) < abs(raw.defense[1] - 1.0)
+
+
 def test_lambdas_favor_stronger_attack():
     # Time forte (muitos gols, poucos sofridos) vs time fraco.
     games = [

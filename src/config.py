@@ -160,6 +160,10 @@ MIN_PICK_PROB: float = float(os.getenv("MIN_PICK_PROB", "0.60"))
 RATINGS_RECENT_N: int = int(os.getenv("RATINGS_RECENT_N", "15"))
 # Iterações do ponto-fixo ataque/defesa (converge rápido).
 RATINGS_ITERATIONS: int = int(os.getenv("RATINGS_ITERATIONS", "12"))
+# Regressão à média dos ratings (0..1). Times "ganham" defesas/ataques extremos
+# contra adversários fracos em eliminatórias/amistosos, o que derrubava o total
+# de gols (Under 2.5 em todo jogo). 0.55 puxa ~45% rumo à média → totais sãos.
+RATINGS_SHRINK: float = float(os.getenv("RATINGS_SHRINK", "0.55"))
 # Vantagem de casa em torneio (1.0 = neutro; sede compartilhada/neutra).
 TOURNAMENT_HOME_ADV: float = float(os.getenv("TOURNAMENT_HOME_ADV", "1.0"))
 

@@ -398,7 +398,8 @@ class FootballDataService:
             self._ratings_mem[context] = (r, _t.monotonic())
             return r
 
-        key = f"{_CACHE_V}:ratings:{context}:{cfg.season}"
+        # ":s55" = ratings com shrink à média (invalida cache de ratings extremos).
+        key = f"{_CACHE_V}:ratings:s55:{context}:{cfg.season}"
         cached = self._disk.get(key)
         if cached is not None:
             return _remember(TeamRatings(
@@ -428,7 +429,8 @@ class FootballDataService:
             return None
 
         ratings = compute_ratings(list(results.values()),
-                                  iterations=config.RATINGS_ITERATIONS)
+                                  iterations=config.RATINGS_ITERATIONS,
+                                  shrink=config.RATINGS_SHRINK)
         self._disk.set(key, {
             "avg": ratings.avg,
             "attack": {str(k): v for k, v in ratings.attack.items()},
