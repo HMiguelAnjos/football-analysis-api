@@ -143,6 +143,11 @@ MAX_EDGE: float = float(os.getenv("MAX_EDGE", "0.15"))
 # Peso do MODELO no blend com o mercado (0=só mercado, 1=só modelo). O mercado
 # de odds é eficiente; o modelo entra como um ajuste, não pra sobrepor.
 MODEL_MARKET_BLEND: float = float(os.getenv("MODEL_MARKET_BLEND", "0.40"))
+# Probabilidade MÍNIMA pra virar recomendação (confiança > valor puro). O
+# produto prioriza o que é PROVÁVEL de acontecer — não azarão com valor magro
+# (ex.: não recomenda "Senegal vencer" a 20% só porque a odd está alta). 0.55 =
+# o modelo precisa realmente favorecer a seleção. Calibrável por env.
+MIN_PICK_PROB: float = float(os.getenv("MIN_PICK_PROB", "0.60"))
 
 # ---------------------------------------------------------------------------
 # Ratings de força de seleção (priors do modelo em torneios)

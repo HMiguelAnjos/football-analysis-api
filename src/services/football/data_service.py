@@ -590,8 +590,15 @@ class FootballDataService:
                     continue
                 if r.edge < min_edge or not (min_odd <= r.odd <= max_odd):
                     continue
+                # Confiança > valor puro: só recomenda o que o modelo REALMENTE
+                # favorece (prob final ≥ piso). Corta azarão com valor magro.
+                final = (1 + r.edge) / r.odd
+                if final < config.MIN_PICK_PROB:
+                    continue
                 out.append(self._value_out(m, r, sample, context))
-        out.sort(key=lambda r: r.edge or 0, reverse=True)
+        # Mais PROVÁVEL primeiro (depois maior valor) — alinha com "o que vai
+        # acontecer", não "azarão com valor".
+        out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
 
     def _value_out(self, m: Match, r, sample: int, context: str) -> RecommendationOut:
@@ -704,9 +711,12 @@ class FootballDataService:
                         continue
                     if not (min_odd <= odd <= max_odd):
                         continue
+                    # Confiança > valor: só o que o modelo REALMENTE favorece.
+                    if final < config.MIN_PICK_PROB:
+                        continue
                     out.append(self._live_out(m, mk, sel, line, final, odd, ev,
                                               sample, context, red_h, red_a))
-        out.sort(key=lambda r: r.edge or 0, reverse=True)
+        out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
 
     def _red_cards(self, m: Match, context: str) -> tuple[int, int]:
