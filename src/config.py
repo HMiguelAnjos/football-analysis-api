@@ -184,6 +184,12 @@ LIVE_ODDS_POLL_SECONDS: int = int(os.getenv("LIVE_ODDS_POLL_SECONDS", "90"))
 # Janela após o kickoff em que um jogo é considerado "possivelmente ao vivo".
 # Fora dela o worker nem chama a api-football (economia off-hours).
 LIVE_WINDOW_HOURS: float = float(os.getenv("LIVE_WINDOW_HOURS", "3.0"))
+# Fallback: reaquece a odd do jogo ao vivo a cada N segundos MESMO sem evento
+# (gol/expulsão). 600 = 10 min. Garante odd nunca mais velha que isso.
+LIVE_ODDS_FALLBACK_SECONDS: int = int(os.getenv("LIVE_ODDS_FALLBACK_SECONDS", "600"))
+# TETO DE GASTO: máximo de jogos cujas odds são reaquecidas por tick (backstop
+# pra evitar pico de chamadas na The Odds API se muita coisa mudar de uma vez).
+LIVE_ODDS_MAX_REFRESH_PER_TICK: int = int(os.getenv("LIVE_ODDS_MAX_REFRESH_PER_TICK", "8"))
 # Catálogos quase estáticos (ligas) — cache longo, economiza muita chamada.
 CATALOG_CACHE_TTL: int = int(os.getenv("CATALOG_CACHE_TTL", str(24 * 3600)))
 
