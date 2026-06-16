@@ -308,6 +308,10 @@ class OpenFootballProvider:
         """openfootball não tem eventos ao vivo."""
         return {}
 
+    def get_live_player_shots(self, fixture_id: int) -> list[dict]:
+        """openfootball não tem chutes por jogador ao vivo."""
+        return []
+
     def get_leagues(self) -> list[League]:
         data = self._payload(self._season)
         return [League(id=config.WORLD_CUP_LEAGUE_ID, name=data.get("name", "World Cup"),

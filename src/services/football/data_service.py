@@ -731,6 +731,82 @@ class FootballDataService:
             return (1.0, 1.0)
         return momentum_multipliers(st.home, st.away)
 
+    def live_shots(self, *, context: str = "general", limit: int = 40):
+        """ESPECIALISTA EM CHUTES A GOL ao vivo: pra cada jogador em campo,
+        projeta os chutes no gol que ainda vêm (taxa de temporada + ritmo no
+        jogo + pressão do time) e recomenda quando é provável (≥ MIN_PICK_PROB)
+        ele bater a próxima linha. Ordena pelos mais prováveis."""
+        from src.probability import live_shots_remaining, prob_at_least, remaining_fraction
+
+        out: list[RecommendationOut] = []
+        for m in self.live_matches(context):
+            getter = getattr(self._football(context), "get_live_player_shots", None)
+            if getter is None:
+                break
+            try:
+                live_players = getter(m.id) or []
+            except Exception:  # noqa: BLE001
+                continue
+            if not live_players:
+                continue
+
+            # Taxa de temporada (chutes no gol/jogo) por jogador.
+            pool = (self.team_player_pool(m.home_team.id, context)
+                    + self.team_player_pool(m.away_team.id, context))
+            rate_by_id = {
+                int(p.id): (p.shots_on_target / p.appearances if p.appearances else 0.0)
+                for p in pool
+            }
+            mom_h, mom_a = self._momentum(m, context)
+            minute = m.minute or 0
+            minutes_left = remaining_fraction(minute) * 90.0
+
+            for lp in live_players:
+                mp = lp.get("minutes", 0)
+                if mp <= 0:                       # nem entrou em campo
+                    continue
+                already = lp.get("shots_on", 0)
+                season_per90 = rate_by_id.get(lp["player_id"], 0.0)
+                mom = mom_h if lp["team_id"] == m.home_team.id else mom_a
+                rem = live_shots_remaining(season_per90, already, mp, minutes_left, mom)
+                if rem <= 0.05:
+                    continue
+                p1 = prob_at_least(1, rem)        # pelo menos +1 no gol
+                p2 = prob_at_least(2, rem)        # pelo menos +2 no gol
+                if p2 >= config.MIN_PICK_PROB:
+                    line, prob = already + 1.5, p2
+                elif p1 >= config.MIN_PICK_PROB:
+                    line, prob = already + 0.5, p1
+                else:
+                    continue
+                out.append(self._shot_out(m, lp, line, prob, already, rem, mom, context))
+        out.sort(key=lambda r: r.model_prob or 0, reverse=True)
+        return out[:limit]
+
+    def _shot_out(self, m: Match, lp: dict, line: float, prob: float,
+                  already: int, rem: float, mom: float, context: str) -> RecommendationOut:
+        """Recomendação de chutes a gol ao vivo → RecommendationOut."""
+        name = lp.get("name", "Jogador")
+        team_name = m.home_team.name if lp["team_id"] == m.home_team.id else m.away_team.name
+        minute = m.minute if m.minute is not None else 0
+        mom_txt = " · time pressionando" if mom >= 1.08 else ""
+        return RecommendationOut(
+            id=0, match=f"{m.home_team.name} x {m.away_team.name}",
+            match_id=m.id, league=m.league_name or None,
+            market="player_shots_on_target",
+            selection=f"{name} — Mais de {line:g} chutes no gol",
+            line=line, odd=None, fair_odd=round(1 / prob, 2) if prob > 0 else None,
+            model_prob=round(prob, 4), implied_prob=None, edge=None,
+            confidence=self._prob_confidence(prob),
+            status="live", reason=(
+                f"AO VIVO {minute}' · {name} já tem {already} chute(s) no gol "
+                f"(projeção +{rem:.1f}{mom_txt}). {prob*100:.0f}% de superar {line:g}."
+            ),
+            bookmaker=None, created_at="", stage=m.stage, group=m.group,
+            kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
+            context=context, team=team_name, player_number=None,
+        )
+
     def _red_cards(self, m: Match, context: str) -> tuple[int, int]:
         """Expulsões (mandante, visitante) do jogo ao vivo. Cacheado curto pra
         não re-bater a cada refresh (mudam raramente)."""

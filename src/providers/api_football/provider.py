@@ -488,6 +488,35 @@ class ApiFootballProvider:
                 out[tid] = out.get(tid, 0) + 1
         return out
 
+    def get_live_player_shots(self, fixture_id: int) -> list[dict]:
+        """Chutes de cada jogador NO JOGO atual (1 chamada: fixtures/players).
+        Base do especialista em chutes a gol ao vivo. {} se a fonte não fornece."""
+        items = self._client.response("fixtures/players", {"fixture": fixture_id})
+        out: list[dict] = []
+        for blk in items:
+            tid = int((blk.get("team", {}) or {}).get("id", 0) or 0)
+            for p in blk.get("players", []) or []:
+                player = p.get("player", {}) or {}
+                pid = int(player.get("id", 0) or 0)
+                if not pid:
+                    continue
+                st = (p.get("statistics") or [{}])[0] or {}
+                sh = st.get("shots") or {}
+                g = st.get("games") or {}
+
+                def _i(v) -> int:
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        return 0
+
+                out.append({
+                    "player_id": pid, "name": player.get("name", "") or "",
+                    "team_id": tid, "minutes": _i(g.get("minutes")),
+                    "shots_total": _i(sh.get("total")), "shots_on": _i(sh.get("on")),
+                })
+        return out
+
     def get_squad(self, team_id: int) -> list[PlayerSeasonStats]:
         """Elenco atual do time (só id/nome/posição, SEM stats — 1 chamada).
         Base pra montar props ANTES do time jogar no torneio."""

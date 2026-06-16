@@ -16,7 +16,7 @@ PURO e determinístico — só matemática sobre números. Sem rede, sem estado.
 
 from __future__ import annotations
 
-from src.probability.poisson import build_score_matrix
+from src.probability.poisson import build_score_matrix, poisson_pmf
 
 # Minuto "cheio" de um jogo. Acréscimos contam como o finzinho da fração.
 _FULL_MATCH_MIN = 90.0
@@ -157,3 +157,33 @@ def inplay_market_probs(
         out[f"over_{line:g}"] = p_over[line]
         out[f"under_{line:g}"] = 1.0 - p_over[line]
     return out
+
+
+# Quanto confiamos no RITMO do jogo (vs taxa de temporada). Cresce com os
+# minutos jogados, com teto — cedo no jogo, a amostra do jogo é fraca.
+_INGAME_TRUST_FULL_MIN = 60.0
+_INGAME_TRUST_CAP = 0.70
+
+
+def live_shots_remaining(season_per90: float, already_on_target: int,
+                         minutes_played: float, minutes_left: float,
+                         momentum: float = 1.0) -> float:
+    """Chutes no gol ADICIONAIS esperados de um jogador no resto do jogo.
+
+    Combina a taxa da TEMPORADA (prior) com o RITMO do jogo atual (quanto o
+    jogador já está chutando), pesando o ritmo conforme o tempo já jogado, e
+    ajusta pela pressão do time (momentum)."""
+    mp = max(minutes_played, 1.0)
+    ingame_per90 = (already_on_target / mp) * 90.0
+    w = min(mp / _INGAME_TRUST_FULL_MIN, _INGAME_TRUST_CAP)
+    rate = (1.0 - w) * max(season_per90, 0.0) + w * ingame_per90
+    rate = max(rate, 0.0) * max(momentum, 0.0)
+    return rate * (max(minutes_left, 0.0) / 90.0)
+
+
+def prob_at_least(k: int, lam: float) -> float:
+    """P(X >= k) pra X ~ Poisson(lam)."""
+    if k <= 0:
+        return 1.0
+    cdf = sum(poisson_pmf(i, lam) for i in range(k))
+    return max(0.0, 1.0 - cdf)

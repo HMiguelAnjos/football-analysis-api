@@ -276,6 +276,11 @@ def get_red_cards(fixture_id: int) -> dict[int, int]:
     return {}
 
 
+def get_live_player_shots(fixture_id: int) -> list[dict]:
+    """Mock não tem chutes por jogador ao vivo."""
+    return []
+
+
 def get_player(player_id: int) -> Optional[PlayerSeasonStats]:
     return _PLAYERS.get(player_id)
 

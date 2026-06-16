@@ -5,7 +5,9 @@ from __future__ import annotations
 from src.probability import build_score_matrix
 from src.probability.live import (
     inplay_market_probs,
+    live_shots_remaining,
     momentum_multipliers,
+    prob_at_least,
     remaining_fraction,
 )
 from src.probability.markets import match_winner
@@ -75,6 +77,26 @@ def test_momentum_lifts_pressing_team_scoring():
     base = inplay_market_probs(1.3, 1.3, 60, 0, 0)["home"]
     pressing = inplay_market_probs(1.3, 1.3, 60, 0, 0, mom_home=1.2, mom_away=0.85)["home"]
     assert pressing > base
+
+
+def test_prob_at_least():
+    # Poisson(lam=2): P(>=1) = 1 - e^-2 ≈ 0.865
+    assert abs(prob_at_least(1, 2.0) - (1 - 2.718281828 ** -2)) < 1e-3
+    assert prob_at_least(0, 0.5) == 1.0
+
+
+def test_live_shots_more_when_hot_and_pressing():
+    # Jogador chutando muito (3 no gol em 45') + time pressionando → projeção de
+    # chutes restantes MAIOR que um jogador frio.
+    hot = live_shots_remaining(0.8, 3, 45, 45, momentum=1.2)
+    cold = live_shots_remaining(0.8, 0, 45, 45, momentum=0.9)
+    assert hot > cold > 0
+
+
+def test_live_shots_decay_near_end():
+    # Pouco tempo restante → poucos chutes adicionais esperados.
+    end = live_shots_remaining(1.0, 1, 88, 2, momentum=1.0)
+    assert end < 0.2
 
 
 def test_already_btts_locks_yes():
