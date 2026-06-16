@@ -208,9 +208,9 @@ class PersistentCache(SimpleCache):
 
     Path:
       - Por padrão lê `CACHE_DIR` (env, default `/tmp`).
-      - `/tmp` é efêmero no Railway → cache wipa todo deploy → custa
-        ScraperAPI no próximo warm. Apontar pra um volume persistente
-        (`CACHE_DIR=/data` + Railway Volume mountado em /data) elimina
+      - `/tmp` é efêmero no Railway → cache wipa todo deploy → re-queima
+        chamadas da api-football no próximo warm. Apontar pra um volume
+        persistente (`CACHE_DIR=/data` + Railway Volume em /data) elimina
         esse desperdício.
     """
 
