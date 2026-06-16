@@ -471,6 +471,23 @@ class ApiFootballProvider:
                 out.append(m)
         return out
 
+    def get_red_cards(self, fixture_id: int) -> dict[int, int]:
+        """Expulsões por time_id no jogo (eventos do tipo Card / vermelho).
+        1 chamada (fixtures/events). {} se a fonte não fornecer."""
+        items = self._client.response("fixtures/events", {"fixture": fixture_id})
+        out: dict[int, int] = {}
+        for ev in items:
+            if (ev.get("type") or "").lower() != "card":
+                continue
+            detail = (ev.get("detail") or "").lower()
+            is_red = "red" in detail or "second yellow" in detail
+            if not is_red:
+                continue
+            tid = int((ev.get("team", {}) or {}).get("id", 0) or 0)
+            if tid:
+                out[tid] = out.get(tid, 0) + 1
+        return out
+
     def get_squad(self, team_id: int) -> list[PlayerSeasonStats]:
         """Elenco atual do time (só id/nome/posição, SEM stats — 1 chamada).
         Base pra montar props ANTES do time jogar no torneio."""

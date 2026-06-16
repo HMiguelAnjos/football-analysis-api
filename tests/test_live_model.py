@@ -42,6 +42,16 @@ def test_probabilities_sum_to_one():
     assert abs((p["btts_yes"] + p["btts_no"]) - 1.0) < 1e-6
 
 
+def test_red_card_helps_opponent():
+    # Jogo 0x0 no minuto 50. Se o VISITANTE leva vermelho, a chance do mandante
+    # vencer deve SUBIR vs o mesmo cenário sem expulsão.
+    base = inplay_market_probs(1.4, 1.2, 50, 0, 0)["home"]
+    away_sent_off = inplay_market_probs(1.4, 1.2, 50, 0, 0, red_away=1)["home"]
+    home_sent_off = inplay_market_probs(1.4, 1.2, 50, 0, 0, red_home=1)["home"]
+    assert away_sent_off > base   # adversário com 10 → mandante favorecido
+    assert home_sent_off < base   # mandante com 10 → mandante prejudicado
+
+
 def test_already_btts_locks_yes():
     # Já está 1x1 → ambas marcam é CERTO (1.0), independente do que falta.
     p = inplay_market_probs(1.5, 1.5, 70, 1, 1)

@@ -24,6 +24,11 @@ _FULL_MATCH_MIN = 90.0
 _MIN_FRACTION = 0.02
 # Lambda mínimo do tempo restante (evita matriz degenerada).
 _MIN_REMAINING_LAMBDA = 0.01
+# Efeito de CARTÃO VERMELHO no resto do jogo: o time com um a menos marca menos
+# (×0.70 por expulsão própria) e o adversário marca mais (×1.30). Valores
+# empíricos moderados — compõem se houver mais de uma expulsão.
+_RED_SELF = 0.70
+_RED_OPP = 1.30
 
 
 def remaining_fraction(minute: float | None) -> float:
@@ -43,16 +48,28 @@ def inplay_market_probs(
     score_home: int,
     score_away: int,
     *,
+    red_home: int = 0,
+    red_away: int = 0,
     ou_lines: tuple[float, ...] = (2.5,),
 ) -> dict[str, float]:
     """Probabilidades dos mercados pro PLACAR FINAL, dado o estado atual.
 
-    Devolve {home, draw, away, btts_yes, btts_no, over_<linha>, under_<linha>}.
-    As chaves de over/under usam a linha formatada (ex.: "over_2.5").
+    `red_home`/`red_away` = nº de expulsões de cada lado (ajusta os gols
+    esperados do tempo restante). Devolve {home, draw, away, btts_yes, btts_no,
+    over_<linha>, under_<linha>}.
     """
     frac = remaining_fraction(minute)
     rem_h = max(lambda_home * frac, _MIN_REMAINING_LAMBDA)
     rem_a = max(lambda_away * frac, _MIN_REMAINING_LAMBDA)
+    # Ajuste por expulsão: cada vermelho próprio reduz o ataque; cada vermelho
+    # do adversário aumenta o seu (vale só pro tempo que falta).
+    if red_home or red_away:
+        rh = max(int(red_home), 0)
+        ra = max(int(red_away), 0)
+        rem_h *= (_RED_SELF ** rh) * (_RED_OPP ** ra)
+        rem_a *= (_RED_SELF ** ra) * (_RED_OPP ** rh)
+        rem_h = max(rem_h, _MIN_REMAINING_LAMBDA)
+        rem_a = max(rem_a, _MIN_REMAINING_LAMBDA)
     sm = build_score_matrix(rem_h, rem_a)  # distribuição dos gols QUE FALTAM
 
     sh = max(int(score_home), 0)

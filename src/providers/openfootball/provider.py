@@ -304,6 +304,10 @@ class OpenFootballProvider:
         """openfootball é estático (sem tempo real) — nunca há jogo ao vivo."""
         return []
 
+    def get_red_cards(self, fixture_id: int) -> dict[int, int]:
+        """openfootball não tem eventos ao vivo."""
+        return {}
+
     def get_leagues(self) -> list[League]:
         data = self._payload(self._season)
         return [League(id=config.WORLD_CUP_LEAGUE_ID, name=data.get("name", "World Cup"),

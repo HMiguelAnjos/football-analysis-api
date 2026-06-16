@@ -271,6 +271,11 @@ def get_live_matches() -> list[Match]:
     return [m for m in _MATCHES.values() if m.status == "live"]
 
 
+def get_red_cards(fixture_id: int) -> dict[int, int]:
+    """Mock não tem eventos de cartão."""
+    return {}
+
+
 def get_player(player_id: int) -> Optional[PlayerSeasonStats]:
     return _PLAYERS.get(player_id)
 

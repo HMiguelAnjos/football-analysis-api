@@ -663,8 +663,10 @@ class FootballDataService:
             hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
             af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
             lh, la = self._lambdas(m, hf, af, context)
+            red_h, red_a = self._red_cards(m, context)
             probs = inplay_market_probs(lh, la, m.minute, m.home_goals,
-                                        m.away_goals, ou_lines=(2.5,))
+                                        m.away_goals, red_home=red_h, red_away=red_a,
+                                        ou_lines=(2.5,))
             sample = min(hf.matches_played, af.matches_played)
 
             odd_map: dict[tuple, list[float]] = {}
@@ -702,12 +704,32 @@ class FootballDataService:
                         continue
                     if not (min_odd <= odd <= max_odd):
                         continue
-                    out.append(self._live_out(m, mk, sel, line, final, odd, ev, sample, context))
+                    out.append(self._live_out(m, mk, sel, line, final, odd, ev,
+                                              sample, context, red_h, red_a))
         out.sort(key=lambda r: r.edge or 0, reverse=True)
         return out[:limit]
 
+    def _red_cards(self, m: Match, context: str) -> tuple[int, int]:
+        """Expulsões (mandante, visitante) do jogo ao vivo. Cacheado curto pra
+        não re-bater a cada refresh (mudam raramente)."""
+        getter = getattr(self._football(context), "get_red_cards", None)
+        if getter is None:
+            return (0, 0)
+        key = f"reds:{context}:{m.id}"
+        cached = self._odds_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            by_team = getter(m.id) or {}
+        except Exception:  # noqa: BLE001 — eventos instáveis não derrubam o feed
+            by_team = {}
+        res = (int(by_team.get(m.home_team.id, 0)), int(by_team.get(m.away_team.id, 0)))
+        self._odds_cache.set(key, res, 60)
+        return res
+
     def _live_out(self, m: Match, market: str, selection: str, line, final: float,
-                  odd: float, ev: float, sample: int, context: str) -> RecommendationOut:
+                  odd: float, ev: float, sample: int, context: str,
+                  red_home: int = 0, red_away: int = 0) -> RecommendationOut:
         """Pick ao vivo calibrado → RecommendationOut (com placar/minuto no motivo)."""
         from src.probability import confidence_score
 
@@ -721,6 +743,10 @@ class FootballDataService:
                                   m.home_team.name, m.away_team.name)
         line_txt = f" {line:g}" if line is not None else ""
         minute = m.minute if m.minute is not None else 0
+        # Nota de expulsão (homens em campo) quando houver vermelho.
+        red_txt = ""
+        if red_home or red_away:
+            red_txt = f" · {11 - red_home}x{11 - red_away} em campo"
         return RecommendationOut(
             id=0, match=f"{m.home_team.name} x {m.away_team.name}",
             match_id=m.id, league=m.league_name or None, market=market,
@@ -729,7 +755,7 @@ class FootballDataService:
             model_prob=round(final, 4), implied_prob=round(1 / odd, 4) if odd else None,
             edge=round(ev, 4), confidence=front_mappers.confidence_label(conf),
             status="live", reason=(
-                f"AO VIVO {minute}' · {m.home_goals}-{m.away_goals} · "
+                f"AO VIVO {minute}' · {m.home_goals}-{m.away_goals}{red_txt} · "
                 f"estimativa {final*100:.0f}% para {sel}{line_txt} vs odd {odd:.2f}. "
                 f"Valor de {ev*100:+.1f}%."
             ),
