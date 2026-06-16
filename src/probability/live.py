@@ -30,6 +30,51 @@ _MIN_REMAINING_LAMBDA = 0.01
 _RED_SELF = 0.70
 _RED_OPP = 1.30
 
+# MOMENTUM (pressão ao vivo): peso de cada estatística no "score de pressão".
+_PRESSURE_WEIGHTS = {
+    "shots_on_goal": 1.0,
+    "total_shots": 0.4,
+    "shots_insidebox": 0.5,
+    "corner_kicks": 0.10,
+    "ball_possession": 0.03,
+    "dangerous_attacks": 0.05,
+}
+# Força do efeito de momentum no lambda restante (0 = ignora). 0.30 → time
+# claramente pressionando (70% da pressão) marca ~+12% no tempo que falta.
+_MOMENTUM_STRENGTH = 0.30
+_MOMENTUM_LO, _MOMENTUM_HI = 0.80, 1.25
+# Abaixo de N finalizações somadas, a amostra é fraca demais → sem momentum.
+_MOMENTUM_MIN_SHOTS = 4
+
+
+def team_pressure(stats: dict) -> float:
+    """Score de pressão de um time a partir das estatísticas ao vivo do jogo."""
+    if not stats:
+        return 0.0
+    return sum(w * float(stats.get(k, 0) or 0) for k, w in _PRESSURE_WEIGHTS.items())
+
+
+def momentum_multipliers(
+    home_stats: dict, away_stats: dict,
+) -> tuple[float, float]:
+    """Multiplicadores (casa, fora) do lambda restante pela PRESSÃO atual.
+    1.0 = neutro. Time pressionando > 1; pressionado < 1. Cedo no jogo (poucas
+    finalizações) devolve (1.0, 1.0) — sinal fraco demais."""
+    total_shots = (float((home_stats or {}).get("total_shots", 0) or 0)
+                   + float((away_stats or {}).get("total_shots", 0) or 0))
+    if total_shots < _MOMENTUM_MIN_SHOTS:
+        return (1.0, 1.0)
+    ph = team_pressure(home_stats)
+    pa = team_pressure(away_stats)
+    total = ph + pa
+    if total <= 0:
+        return (1.0, 1.0)
+    share_home = ph / total                       # 0..1 (0.5 = equilíbrio)
+    delta = (share_home - 0.5) * 2 * _MOMENTUM_STRENGTH
+    mh = min(max(1.0 + delta, _MOMENTUM_LO), _MOMENTUM_HI)
+    ma = min(max(1.0 - delta, _MOMENTUM_LO), _MOMENTUM_HI)
+    return (mh, ma)
+
 
 def remaining_fraction(minute: float | None) -> float:
     """Fração do jogo que ainda falta (0..1) a partir do minuto atual."""
@@ -50,12 +95,15 @@ def inplay_market_probs(
     *,
     red_home: int = 0,
     red_away: int = 0,
+    mom_home: float = 1.0,
+    mom_away: float = 1.0,
     ou_lines: tuple[float, ...] = (2.5,),
 ) -> dict[str, float]:
     """Probabilidades dos mercados pro PLACAR FINAL, dado o estado atual.
 
-    `red_home`/`red_away` = nº de expulsões de cada lado (ajusta os gols
-    esperados do tempo restante). Devolve {home, draw, away, btts_yes, btts_no,
+    `red_home`/`red_away` = nº de expulsões de cada lado; `mom_home`/`mom_away` =
+    multiplicador de momentum (pressão ao vivo). Ambos ajustam os gols esperados
+    do TEMPO RESTANTE. Devolve {home, draw, away, btts_yes, btts_no,
     over_<linha>, under_<linha>}.
     """
     frac = remaining_fraction(minute)
@@ -68,8 +116,9 @@ def inplay_market_probs(
         ra = max(int(red_away), 0)
         rem_h *= (_RED_SELF ** rh) * (_RED_OPP ** ra)
         rem_a *= (_RED_SELF ** ra) * (_RED_OPP ** rh)
-        rem_h = max(rem_h, _MIN_REMAINING_LAMBDA)
-        rem_a = max(rem_a, _MIN_REMAINING_LAMBDA)
+    # Ajuste por momentum (quem está pressionando marca mais no resto do jogo).
+    rem_h = max(rem_h * mom_home, _MIN_REMAINING_LAMBDA)
+    rem_a = max(rem_a * mom_away, _MIN_REMAINING_LAMBDA)
     sm = build_score_matrix(rem_h, rem_a)  # distribuição dos gols QUE FALTAM
 
     sh = max(int(score_home), 0)

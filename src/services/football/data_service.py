@@ -327,20 +327,24 @@ class FootballDataService:
         # MESMA fonte usada na tabela de mercados, pra a análise bater com ela.
         lam = self._lambdas(m, hf, af, context)
 
-        # 1) MELHOR aposta de valor CALIBRADA (mesma régua da aba Recomendações:
-        #    de-vig + blend + teto). Antes usava o engine cru e mostrava edges
-        #    irreais (ex.: BTTS +107%); agora bate número a número com a tabela.
+        # 1) MELHOR mercado que o modelo julga PROVÁVEL (mesma régua da aba
+        #    Recomendações: prob ≥ piso, odds opcionais). Bate com a tabela.
         rows = self.match_markets(m.id, context=context)
         focus = {"1x2", "over_under", "btts"}
+
+        def _prob_of(r):
+            return ((1 + r.edge) / r.odd) if (r.edge is not None and r.odd) else (r.model_prob or 0.0)
+
         cands = [
             r for r in rows
-            if r.market in focus and r.odd is not None and r.edge is not None
-            and r.edge >= config.MIN_EDGE and config.MIN_ODD <= r.odd <= config.MAX_ODD
+            if r.market in focus and _prob_of(r) >= config.MIN_PICK_PROB
+            and not (r.market == "over_under" and r.line != 2.5)
+            and (r.odd is None or config.MIN_ODD <= r.odd <= config.MAX_ODD)
         ]
         if cands:
-            best = max(cands, key=lambda x: x.edge)
+            best = max(cands, key=_prob_of)
             sample = min(hf.matches_played, af.matches_played)
-            out = self._value_out(m, best, sample, context)
+            out = self._prob_out(m, best, _prob_of(best), sample, context)
             return out, out.reason
 
         # 2) Sem valor claro → previsão do modelo (probabilidades, sem edge).
@@ -555,27 +559,19 @@ class FootballDataService:
     def opportunities(self, *, context: str = "general", limit: int = 30,
                       min_edge: Optional[float] = None, min_odd: Optional[float] = None,
                       max_odd: Optional[float] = None):
-        """Apostas de VALOR entre os jogos próximos — 1X2, over/under e BTTS.
+        """Recomendações PRÉ-JOGO — 1X2, over/under e BTTS que o modelo julga
+        PROVÁVEIS (prob ≥ MIN_PICK_PROB), ordenadas pela probabilidade.
 
-        Reusa `match_markets`, que já entrega o edge CALIBRADO (de-vig + blend
-        modelo×mercado, com TETO MAX_EDGE). Assim o feed de valor e a tabela de
-        Mercados batem número a número (consistência = confiança). Filtramos por
-        edge mínimo e faixa de odd — over/under e BTTS é onde moram as odds
-        ~1.8-2.0 com valor. Ao vivo, sem banco.
+        Funciona COM ou SEM odds: a odd é só informação extra. Sem The Odds API,
+        recomenda puramente pela previsão do modelo (foco em confiança, não em
+        'valor de mercado'). Só jogos que ainda não começaram.
         """
-        from src.probability import confidence_score
         from src.providers.base import TeamForm
-        from src.services.football import front_mappers
 
-        min_edge = config.MIN_EDGE if min_edge is None else min_edge
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
-
-        # Mercados-foco do feed de valor. DC/DNB são hedges de favorito (odd
-        # baixa, raramente com valor) — ficam de fora pra não poluir.
         focus = {"1x2", "over_under", "btts"}
 
-        # Modelo é pré-jogo → só jogos que ainda não começaram (sem in-play/encerrado).
         matches = self._upcoming_matches(context, only_future=True)
         out = []
         for m in matches:
@@ -586,56 +582,61 @@ class FootballDataService:
             af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
             sample = min(hf.matches_played, af.matches_played)
             for r in rows:
-                if r.market not in focus or r.odd is None or r.edge is None:
+                if r.market not in focus:
                     continue
-                if r.edge < min_edge or not (min_odd <= r.odd <= max_odd):
+                # Só a linha PRINCIPAL de gols (2.5). Over 0.5 / Under 3.5 são
+                # quase-certezas triviais — não servem como recomendação.
+                if r.market == "over_under" and r.line != 2.5:
                     continue
-                # Confiança > valor puro: só recomenda o que o modelo REALMENTE
-                # favorece (prob final ≥ piso). Corta azarão com valor magro.
-                final = (1 + r.edge) / r.odd
-                if final < config.MIN_PICK_PROB:
+                # Prob exibida: coerente com o edge quando há odds; senão, modelo puro.
+                prob = ((1 + r.edge) / r.odd) if (r.edge is not None and r.odd) else (r.model_prob or 0.0)
+                if prob < config.MIN_PICK_PROB:
                     continue
-                out.append(self._value_out(m, r, sample, context))
-        # Mais PROVÁVEL primeiro (depois maior valor) — alinha com "o que vai
-        # acontecer", não "azarão com valor".
+                if r.odd is not None and not (min_odd <= r.odd <= max_odd):
+                    continue
+                out.append(self._prob_out(m, r, prob, sample, context))
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
 
-    def _value_out(self, m: Match, r, sample: int, context: str) -> RecommendationOut:
-        """Linha de mercado CALIBRADA (match_markets) → recomendação de valor.
-        Fonte ÚNICA usada pela aba Recomendações E pelo bloco da análise — então
-        os dois mostram exatamente o mesmo número pro mesmo jogo/mercado."""
-        from src.probability import confidence_score
+    @staticmethod
+    def _prob_confidence(prob: float, edge=None) -> str:
+        """Confiança pela PROBABILIDADE (produto confiança-first): quanto mais
+        provável, maior a confiança. Se há odds e o modelo discorda MUITO do
+        mercado (edge no teto), não deixa subir pra 'high' (cautela)."""
+        if prob >= 0.75:
+            label = "high"
+        elif prob >= 0.65:
+            label = "medium"
+        else:
+            label = "low"
+        if label == "high" and edge is not None and edge >= 0.90 * config.MAX_EDGE:
+            label = "medium"
+        return label
 
-        # Probabilidade FINAL (coerente com o edge calibrado nesta odd):
-        # final × odd − 1 = edge. r.model_prob é a CRUA (não bate com o edge
-        # blendado) — exibir a final deixa o card consistente.
-        final = (1 + r.edge) / r.odd
-        conf = confidence_score(edge_value=r.edge, model_probability=final,
-                                matches_sample=sample, has_xg=False)
-        # Edge colado no TETO = forte discordância com o mercado, que costuma ser
-        # ERRO do modelo (não valor real). Rebaixa a confiança pra não "vender
-        # forte": >=90% do teto → no máx. "baixa"; >=70% → no máx. "média".
-        if r.edge >= 0.90 * config.MAX_EDGE:
-            conf = min(conf, 44.0)
-        elif r.edge >= 0.70 * config.MAX_EDGE:
-            conf = min(conf, 69.0)
+    def _prob_out(self, m: Match, r, prob: float, sample: int,
+                  context: str) -> RecommendationOut:
+        """Linha de mercado → recomendação por PROBABILIDADE (odds opcionais).
+        Odd/edge entram só como informação extra quando existem."""
+        edge = r.edge
+        conf_label = self._prob_confidence(prob, edge)
         sel = self._opp_selection(
             r.market, r.selection, r.line, m.home_team.name, m.away_team.name)
         line_txt = f" {r.line:g}" if r.line is not None else ""
+        reason = f"Estimativa {prob*100:.0f}% para {sel}{line_txt}."
+        if r.odd is not None:
+            reason += f" Odd {r.odd:.2f}"
+            if edge is not None:
+                reason += f" · valor {edge*100:+.1f}%"
+            reason += "."
         return RecommendationOut(
             id=0, match=f"{m.home_team.name} x {m.away_team.name}",
             match_id=m.id, league=m.league_name or None, market=r.market,
             selection=sel, line=r.line, odd=r.odd,
-            fair_odd=round(1 / final, 2) if final > 0 else None,
-            model_prob=round(final, 4),
+            fair_odd=round(1 / prob, 2) if prob > 0 else None,
+            model_prob=round(prob, 4),
             implied_prob=round(1 / r.odd, 4) if r.odd else None,
-            edge=r.edge, confidence=front_mappers.confidence_label(conf),
-            status="pending", reason=(
-                f"Estimativa {final*100:.0f}% para {sel}{line_txt} "
-                f"vs odd {r.odd:.2f} (casa estima {100/r.odd:.0f}%). "
-                f"Valor de {r.edge*100:+.1f}%."
-            ),
+            edge=edge, confidence=conf_label,
+            status="pending", reason=reason,
             bookmaker=None, created_at="", stage=m.stage, group=m.group,
             kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
             context=context,
@@ -645,18 +646,17 @@ class FootballDataService:
                            min_edge: Optional[float] = None,
                            min_odd: Optional[float] = None,
                            max_odd: Optional[float] = None):
-        """Picks de VALOR AO VIVO: modelo IN-PLAY (placar+minuto) × odd ao vivo.
+        """Picks AO VIVO pelo modelo IN-PLAY: placar + minuto + expulsões +
+        MOMENTUM (pressão atual do jogo via estatísticas ao vivo). Recomenda o
+        que é PROVÁVEL (prob ≥ MIN_PICK_PROB), ordenado por probabilidade.
 
-        Diferente das oportunidades pré-jogo, aqui a probabilidade vem do estado
-        atual do jogo (gols que ainda faltam + placar). Mesma calibração:
-        de-vig + blend modelo×mercado + teto MAX_EDGE. Sem banco."""
+        Funciona COM ou SEM odds — a odd é só informação extra. Sem The Odds
+        API, roda 100% pelo que está acontecendo em campo + histórico."""
         import statistics as _st
-        from collections import defaultdict
 
-        from src.probability import inplay_market_probs, remove_vig
+        from src.probability import inplay_market_probs
         from src.providers.base import TeamForm
 
-        min_edge = config.MIN_EDGE if min_edge is None else min_edge
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
 
@@ -664,24 +664,27 @@ class FootballDataService:
         for m in self.live_matches(context):
             if m.home_goals is None or m.away_goals is None:
                 continue
-            odds = self.match_odds_domain(m, context=context)
-            if odds is None or not odds.markets:
-                continue
             hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
             af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
             lh, la = self._lambdas(m, hf, af, context)
             red_h, red_a = self._red_cards(m, context)
-            probs = inplay_market_probs(lh, la, m.minute, m.home_goals,
-                                        m.away_goals, red_home=red_h, red_away=red_a,
-                                        ou_lines=(2.5,))
+            mom_h, mom_a = self._momentum(m, context)
+            probs = inplay_market_probs(
+                lh, la, m.minute, m.home_goals, m.away_goals,
+                red_home=red_h, red_away=red_a, mom_home=mom_h, mom_away=mom_a,
+                ou_lines=(2.5,))
             sample = min(hf.matches_played, af.matches_played)
 
-            odd_map: dict[tuple, list[float]] = {}
-            for mk, mo in odds.markets.items():
-                for s in mo.selections:
-                    odd_map.setdefault((mk, s.name, s.line), []).append(s.price)
+            # Odds são OPCIONAIS (só enriquecem o card quando existem).
+            odd_map: dict[tuple, float] = {}
+            odds = self.match_odds_domain(m, context=context)
+            if odds and odds.markets:
+                tmp: dict[tuple, list[float]] = {}
+                for mk, mo in odds.markets.items():
+                    for s in mo.selections:
+                        tmp.setdefault((mk, s.name, s.line), []).append(s.price)
+                odd_map = {k: round(_st.mean(v), 2) for k, v in tmp.items() if v}
 
-            # Candidatos (mercado, seleção, linha, prob in-play).
             cands = [
                 ("1x2", "home", None, probs["home"]),
                 ("1x2", "draw", None, probs["draw"]),
@@ -691,33 +694,42 @@ class FootballDataService:
                 ("btts", "yes", None, probs["btts_yes"]),
                 ("btts", "no", None, probs["btts_no"]),
             ]
-            groups: dict[tuple, list] = defaultdict(list)
-            for mk, sel, line, mp in cands:
-                prices = odd_map.get((mk, sel, line))
-                odd = round(_st.mean(prices), 2) if prices else None
-                groups[(mk, line)].append([mk, sel, line, mp, odd])
-
-            for grp in groups.values():
-                godds = [g[4] for g in grp]
-                if not all(godds) or len(godds) < 2:
+            for mk, sel, line, model_p in cands:
+                if model_p < config.MIN_PICK_PROB:
                     continue
-                devig = remove_vig(godds)  # prob "justa" do mercado ao vivo
-                for g, mkt_p in zip(grp, devig):
-                    mk, sel, line, model_p, odd = g
-                    final = (config.MODEL_MARKET_BLEND * model_p
-                             + (1 - config.MODEL_MARKET_BLEND) * mkt_p)
-                    ev = final * odd - 1.0
-                    if not (min_edge <= ev <= config.MAX_EDGE):
-                        continue
-                    if not (min_odd <= odd <= max_odd):
-                        continue
-                    # Confiança > valor: só o que o modelo REALMENTE favorece.
-                    if final < config.MIN_PICK_PROB:
-                        continue
-                    out.append(self._live_out(m, mk, sel, line, final, odd, ev,
-                                              sample, context, red_h, red_a))
+                odd = odd_map.get((mk, sel, line))
+                if odd is not None and not (min_odd <= odd <= max_odd):
+                    continue
+                edge = round(model_p * odd - 1.0, 4) if odd else None
+                out.append(self._live_out(m, mk, sel, line, model_p, odd, edge,
+                                          sample, context, red_h, red_a, mom_h, mom_a))
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
+
+    def _live_stats(self, m: Match, context: str):
+        """Estatísticas ao vivo do jogo (chutes, posse, escanteios...) — base do
+        momentum. Cacheado curto. None quando a fonte não fornece."""
+        getter = getattr(self._football(context), "get_match_statistics", None)
+        if getter is None:
+            return None
+        key = f"livestats:{context}:{m.id}"
+        cached = self._odds_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            st = getter(m.id)
+        except Exception:  # noqa: BLE001
+            st = None
+        self._odds_cache.set(key, st, 60)
+        return st
+
+    def _momentum(self, m: Match, context: str) -> tuple[float, float]:
+        """Multiplicadores de momentum (casa, fora) pela pressão atual do jogo."""
+        from src.probability import momentum_multipliers
+        st = self._live_stats(m, context)
+        if st is None:
+            return (1.0, 1.0)
+        return momentum_multipliers(st.home, st.away)
 
     def _red_cards(self, m: Match, context: str) -> tuple[int, int]:
         """Expulsões (mandante, visitante) do jogo ao vivo. Cacheado curto pra
@@ -737,37 +749,38 @@ class FootballDataService:
         self._odds_cache.set(key, res, 60)
         return res
 
-    def _live_out(self, m: Match, market: str, selection: str, line, final: float,
-                  odd: float, ev: float, sample: int, context: str,
-                  red_home: int = 0, red_away: int = 0) -> RecommendationOut:
-        """Pick ao vivo calibrado → RecommendationOut (com placar/minuto no motivo)."""
-        from src.probability import confidence_score
-
-        conf = confidence_score(edge_value=ev, model_probability=final,
-                                matches_sample=sample, has_xg=False)
-        if ev >= 0.90 * config.MAX_EDGE:
-            conf = min(conf, 44.0)
-        elif ev >= 0.70 * config.MAX_EDGE:
-            conf = min(conf, 69.0)
+    def _live_out(self, m: Match, market: str, selection: str, line, prob: float,
+                  odd, edge, sample: int, context: str,
+                  red_home: int = 0, red_away: int = 0,
+                  mom_home: float = 1.0, mom_away: float = 1.0) -> RecommendationOut:
+        """Pick ao vivo → RecommendationOut (placar/minuto/expulsão/pressão no
+        motivo). Odd/edge são opcionais."""
+        conf_label = self._prob_confidence(prob, edge)
         sel = self._opp_selection(market, selection, line,
                                   m.home_team.name, m.away_team.name)
         line_txt = f" {line:g}" if line is not None else ""
         minute = m.minute if m.minute is not None else 0
-        # Nota de expulsão (homens em campo) quando houver vermelho.
         red_txt = ""
         if red_home or red_away:
             red_txt = f" · {11 - red_home}x{11 - red_away} em campo"
+        mom_txt = ""
+        if mom_home >= 1.08:
+            mom_txt = f" · {m.home_team.name} pressionando"
+        elif mom_away >= 1.08:
+            mom_txt = f" · {m.away_team.name} pressionando"
+        odd_txt = ""
+        if odd is not None:
+            odd_txt = f" Odd {odd:.2f}." + (f" Valor {edge*100:+.1f}%." if edge is not None else "")
         return RecommendationOut(
             id=0, match=f"{m.home_team.name} x {m.away_team.name}",
             match_id=m.id, league=m.league_name or None, market=market,
             selection=sel, line=line, odd=odd,
-            fair_odd=round(1 / final, 2) if final > 0 else None,
-            model_prob=round(final, 4), implied_prob=round(1 / odd, 4) if odd else None,
-            edge=round(ev, 4), confidence=front_mappers.confidence_label(conf),
+            fair_odd=round(1 / prob, 2) if prob > 0 else None,
+            model_prob=round(prob, 4), implied_prob=round(1 / odd, 4) if odd else None,
+            edge=edge, confidence=conf_label,
             status="live", reason=(
-                f"AO VIVO {minute}' · {m.home_goals}-{m.away_goals}{red_txt} · "
-                f"estimativa {final*100:.0f}% para {sel}{line_txt} vs odd {odd:.2f}. "
-                f"Valor de {ev*100:+.1f}%."
+                f"AO VIVO {minute}' · {m.home_goals}-{m.away_goals}{red_txt}{mom_txt} · "
+                f"estimativa {prob*100:.0f}% para {sel}{line_txt}.{odd_txt}"
             ),
             bookmaker=None, created_at="", stage=m.stage, group=m.group,
             kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
