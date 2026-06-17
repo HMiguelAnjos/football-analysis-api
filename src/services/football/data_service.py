@@ -938,8 +938,29 @@ class FootballDataService:
                            config.CATALOG_CACHE_TTL)
         return pool
 
+    def _starters(self, match_id: int, context: str) -> dict[int, set[int]]:
+        """Titulares por team_id quando a escalação está disponível (~1h antes
+        do jogo). {} se ainda não saiu. Cacheado curto."""
+        key = f"lineups:{context}:{match_id}"
+        cached = self._odds_cache.get(key)
+        if cached is not None:
+            return cached
+        getter = getattr(self._football(context), "get_lineups", None)
+        out: dict[int, set[int]] = {}
+        if getter is not None:
+            try:
+                for lu in (getter(match_id) or []):
+                    ids = {p.player_id for p in (lu.starters or []) if p.player_id}
+                    if ids:
+                        out[lu.team_id] = ids
+            except Exception:  # noqa: BLE001
+                out = {}
+        self._odds_cache.set(key, out, 300)
+        return out
+
     def match_props(self, match_id: int, context: str = "general"):
-        """Player props recomendadas pra ESTE jogo (projeção × adversário)."""
+        """Player props recomendadas pra ESTE jogo (projeção × adversário).
+        Quando a escalação já saiu, recomenda SÓ titulares."""
         from src.providers.base import TeamForm
         from src.recommendation.player_props import generate_player_props
 
@@ -948,10 +969,19 @@ class FootballDataService:
             return []
         hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
         af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+
+        starters = self._starters(match_id, context)
+
+        def pool(team_id: int):
+            players = self.team_player_pool(team_id, context)
+            xi = starters.get(team_id)
+            # Escalação saiu → só titulares; senão, elenco todo (não dá pra saber).
+            return [p for p in players if int(p.id) in xi] if xi else players
+
         picks = generate_player_props(
             match=m, home_form=hf, away_form=af,
-            home_players=self.team_player_pool(m.home_team.id, context),
-            away_players=self.team_player_pool(m.away_team.id, context),
+            home_players=pool(m.home_team.id),
+            away_players=pool(m.away_team.id),
         )
         return [front_mappers.prop_to_out(pk, m) for pk in picks]
 
