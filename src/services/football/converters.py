@@ -192,6 +192,7 @@ def player_to_schema(p: PlayerSeasonStats, *, team_name: Optional[str] = None) -
     return PlayerSchema(
         id=p.player_id, name=p.name, team=team_name or (p.team_name or None),
         team_id=p.team_id or None, position=p.position or None, number=p.number,
+        nt_appearances=p.nt_appearances,
         appearances=p.appearances, goals=p.goals, assists=p.assists,
         xg=p.xg, xa=p.xa, shots=p.shots, shots_on_target=p.shots_on_target,
         minutes=p.minutes, yellow_cards=p.yellow_cards or None,

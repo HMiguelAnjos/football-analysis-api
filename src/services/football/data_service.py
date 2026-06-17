@@ -873,14 +873,16 @@ class FootballDataService:
     # (ex.: De Bruyne). generate_player_props já pega só o top N por chute/gol.
     _SQUAD_ENRICH_CAP = 16
 
-    def _player_season_cached(self, player_id: int, season: int, context: str):
+    def _player_season_cached(self, player_id: int, season: int, context: str,
+                              national_team_id: Optional[int] = None):
         """Stats de temporada de um jogador (clube+seleção agregadas), cacheadas
-        em disco por jogador — reusadas entre times, jogos e telas."""
+        em disco por jogador. national_team_id → soma jogos pela seleção."""
         import dataclasses
 
         from src.providers.base import PlayerSeasonStats
 
-        key = f"{_CACHE_V}:pseason:{player_id}:{season}"
+        # ":n2" = inclui nt_appearances (jogos pela seleção).
+        key = f"{_CACHE_V}:pseason:n2:{player_id}:{season}:{national_team_id or 0}"
         cached = self._disk.get(key)
         if cached is not None:
             return PlayerSeasonStats(**cached) if cached else None
@@ -889,7 +891,12 @@ class FootballDataService:
             return None
         stats = None
         try:
-            stats = getter(player_id, season)
+            stats = getter(player_id, season, national_team_id)
+        except TypeError:        # provider sem suporte a national_team_id
+            try:
+                stats = getter(player_id, season)
+            except Exception:    # noqa: BLE001
+                logger.warning("props: falha buscando stats do jogador %s", player_id)
         except Exception:  # noqa: BLE001 — jogador problemático não derruba o pool
             logger.warning("props: falha buscando stats do jogador %s", player_id)
         # Cacheia inclusive o vazio ({}) pra não re-bater no mesmo id sem dado.
@@ -900,9 +907,8 @@ class FootballDataService:
     def team_player_pool(self, team_id: int, context: str = "general") -> list[PlayerSchema]:
         """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção) —
         base das props ANTES do time jogar no torneio. Cacheado por time."""
-        # ":n2" = atacantes priorizados no pool (corrige estrelas — Salah/Lukaku —
-        # sendo cortadas pelo teto por virem no fim do elenco).
-        key = f"{_CACHE_V}:squadpool:n2:{context}:{team_id}:{config.CURRENT_SEASON}"
+        # ":n3" = inclui nt_appearances (jogos pela seleção) no pool.
+        key = f"{_CACHE_V}:squadpool:n3:{context}:{team_id}:{config.CURRENT_SEASON}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
@@ -921,7 +927,9 @@ class FootballDataService:
             # finalizadores (Salah idx 25). Atacantes primeiro, meias depois.
             relevant.sort(key=lambda s: 0 if s.position == "Attacker" else 1)
             for sp in relevant[: self._SQUAD_ENRICH_CAP]:
-                stats = self._player_season_cached(sp.player_id, config.CURRENT_SEASON, context)
+                stats = self._player_season_cached(
+                    sp.player_id, config.CURRENT_SEASON, context,
+                    national_team_id=team_id)
                 if stats is None or stats.appearances <= 0:
                     continue
                 stats.team_id = team_id
@@ -975,8 +983,15 @@ class FootballDataService:
         def pool(team_id: int):
             players = self.team_player_pool(team_id, context)
             xi = starters.get(team_id)
-            # Escalação saiu → só titulares; senão, elenco todo (não dá pra saber).
-            return [p for p in players if int(p.id) in xi] if xi else players
+            if xi:                                    # escalação saiu → só titulares
+                return [p for p in players if int(p.id) in xi]
+            # Sem escalação: prioriza prováveis titulares pelos MAIS CONVOCADOS
+            # (jogos pela seleção). Corta fringe/novatos sem caps.
+            capped = [p for p in players if (p.nt_appearances or 0) > 0]
+            if len(capped) >= 4:
+                capped.sort(key=lambda p: p.nt_appearances or 0, reverse=True)
+                return capped[:10]
+            return players                            # sem dados de seleção → elenco
 
         picks = generate_player_props(
             match=m, home_form=hf, away_form=af,
@@ -990,8 +1005,8 @@ class FootballDataService:
         """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador)."""
-        # ":n3" = pool com atacantes priorizados (Salah/Lukaku) + só jogos futuros.
-        key = f"{_CACHE_V}:propsfeed:n3:{context}:{limit}:{max_matches}"
+        # ":n4" = prioriza prováveis titulares (jogos pela seleção / escalação).
+        key = f"{_CACHE_V}:propsfeed:n4:{context}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]

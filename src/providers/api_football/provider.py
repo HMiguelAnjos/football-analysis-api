@@ -539,14 +539,26 @@ class ApiFootballProvider:
                 ))
         return out
 
-    def get_player_season(self, player_id: int,
-                          season: int) -> Optional[PlayerSeasonStats]:
+    def get_player_season(self, player_id: int, season: int,
+                          national_team_id: Optional[int] = None) -> Optional[PlayerSeasonStats]:
         """Stats de UM jogador na temporada, AGREGADAS por todas as competições
-        (clube + seleção). É a taxa de chute/gol usada nas props pré-jogo."""
+        (clube + seleção). Se `national_team_id` vier, soma os jogos PELA SELEÇÃO
+        (blocos cujo time é a seleção) — proxy de titular pra props pré-jogo."""
         items = self._client.response("players", {"id": player_id, "season": season})
         if not items:
             return None
-        return self._parse_player_block(items[0])
+        stats = self._parse_player_block(items[0])
+        if stats and national_team_id:
+            nt = 0
+            for s in items[0].get("statistics", []) or []:
+                tid = int((s.get("team", {}) or {}).get("id", 0) or 0)
+                if tid == national_team_id:
+                    try:
+                        nt += int((s.get("games", {}) or {}).get("appearences") or 0)
+                    except (TypeError, ValueError):
+                        pass
+            stats.nt_appearances = nt
+        return stats
 
     def get_player(self, player_id: int) -> Optional[PlayerSeasonStats]:
         items = self._client.response("players", {

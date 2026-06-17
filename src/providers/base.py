@@ -106,6 +106,7 @@ class PlayerSeasonStats:
     team_id: int
     position: str = ""
     number: Optional[int] = None     # número da camisa (vem do elenco/squad)
+    nt_appearances: int = 0          # jogos PELA SELEÇÃO (proxy de titular)
     appearances: int = 0
     minutes: int = 0
     goals: int = 0

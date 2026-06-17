@@ -175,6 +175,7 @@ class PlayerSchema(BaseModel):
     team_id: Optional[int] = None
     position: Optional[str] = None
     number: Optional[int] = None      # número da camisa
+    nt_appearances: int = 0           # jogos pela seleção (proxy de titular)
     appearances: int = 0
     goals: int = 0
     assists: int = 0
