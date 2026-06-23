@@ -103,14 +103,22 @@ def _over_pick(player: PlayerSchema, team: str, market: str, per_game: float,
     )
 
 
-def _scorer_pick(player: PlayerSchema, team: str, goals_pg: float,
-                 scaler: float, opp: str) -> Optional[PropPick]:
-    proj = goals_pg * scaler
+# Expectativa de GOLS DE PÊNALTI por jogo pro batedor OFICIAL do time (≈ pênaltis
+# concedidos/jogo × taxa de conversão). Some à projeção de gol só do batedor.
+MATCH_PEN_GOALS = 0.15
+
+
+def _scorer_pick(player: PlayerSchema, team: str, open_play_pg: float,
+                 scaler: float, opp: str, *, is_penalty_taker: bool = False) -> Optional[PropPick]:
+    # Gols de bola rolando (escalados pelo confronto) + pênalti só pro batedor
+    # oficial — evita dar crédito de pênalti a quem não bate.
+    proj = open_play_pg * scaler + (MATCH_PEN_GOALS if is_penalty_taker else 0.0)
     if proj <= 0.05:
         return None
     prob = 1.0 - poisson_pmf(0, proj)
     if prob < MIN_PROB["anytime_scorer"]:
         return None
+    pen_txt = " · cobra os pênaltis" if is_penalty_taker else ""
     return PropPick(
         player_name=player.name, team=team, number=getattr(player, "number", None),
         market="anytime_scorer",
@@ -119,8 +127,8 @@ def _scorer_pick(player: PlayerSchema, team: str, goals_pg: float,
         fair_odd=round(1 / prob, 2) if prob > 0 else 0.0,
         confidence_score=round(min(prob, 0.97) * 100, 1),
         recommendation_reason=(
-            f"{player.name} faz {goals_pg:.2f} gol/jogo; {opp}. "
-            f"Modelo: {prob*100:.0f}% de marcar."
+            f"{player.name} faz {open_play_pg:.2f} gol(bola rolando)/jogo{pen_txt}; "
+            f"{opp}. Modelo: {prob*100:.0f}% de marcar."
         ),
     )
 
@@ -134,9 +142,19 @@ def _team_props(players: list[PlayerSchema], team: str, scaler: float) -> list[P
                           _per_game(p.shots_on_target, p.appearances), scaler, opp)
         if pick:
             picks.append(pick)
-    # Goleadores (top por gols → marcar a qualquer momento).
-    for p in sorted(players, key=lambda x: x.goals or 0, reverse=True)[:TOP_N_PER_TEAM]:
-        pick = _scorer_pick(p, team, _per_game(p.goals, p.appearances), scaler, opp)
+
+    # Batedor de pênalti OFICIAL = mais pênaltis convertidos na temporada (auto).
+    taker = max(players, key=lambda x: x.penalty_scored or 0, default=None)
+    taker_id = taker.id if (taker and (taker.penalty_scored or 0) >= 1) else None
+
+    # Goleadores: top por gols + o batedor de pênalti (mesmo que não seja top).
+    scorers = sorted(players, key=lambda x: x.goals or 0, reverse=True)[:TOP_N_PER_TEAM]
+    if taker_id is not None and all(p.id != taker_id for p in scorers):
+        scorers = [*scorers, taker]
+    for p in scorers:
+        open_play = max((p.goals or 0) - (p.penalty_scored or 0), 0)
+        pick = _scorer_pick(p, team, _per_game(open_play, p.appearances), scaler, opp,
+                            is_penalty_taker=(p.id == taker_id))
         if pick:
             picks.append(pick)
     return picks
