@@ -190,6 +190,10 @@ ODDS_LIVE_TTL: int = int(os.getenv("ODDS_LIVE_TTL", "600"))             # 10 min
 # reaquece as odds do jogo — em vez de re-buscar tudo a cada N minutos.
 ENABLE_LIVE_ODDS_WORKER: bool = _flag("ENABLE_LIVE_ODDS_WORKER", "0")
 LIVE_ODDS_POLL_SECONDS: int = int(os.getenv("LIVE_ODDS_POLL_SECONDS", "90"))
+# Worker de recomendações AO VIVO (foco escanteios) — gera/persiste no banco.
+# Precisa de Postgres pra persistir.
+ENABLE_LIVE_RECO_WORKER: bool = _flag("ENABLE_LIVE_RECO_WORKER", "0")
+LIVE_RECO_POLL_SECONDS: int = int(os.getenv("LIVE_RECO_POLL_SECONDS", "120"))
 # Janela após o kickoff em que um jogo é considerado "possivelmente ao vivo".
 # Fora dela o worker nem chama a api-football (economia off-hours).
 LIVE_WINDOW_HOURS: float = float(os.getenv("LIVE_WINDOW_HOURS", "3.0"))

@@ -11,9 +11,14 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.db.models import FootballPickResult, FootballRecommendation
+from src.db.models import (
+    FootballLiveRecommendation,
+    FootballPickResult,
+    FootballRecommendation,
+)
 from src.schemas.football_schemas import (
     LivePickOut,
+    LiveRecoOut,
     PerfBreakdownItem,
     PerformanceSummary,
     PerfTotals,
@@ -100,6 +105,19 @@ def prop_to_out(pick, match) -> RecommendationOut:
         reason=pick.recommendation_reason, bookmaker=None, created_at="",
         stage=match.stage, group=match.group, kickoff=_iso(match.utc_kickoff),
         team=pick.team, player_number=pick.number,
+    )
+
+
+def live_reco_to_out(r: FootballLiveRecommendation) -> LiveRecoOut:
+    """Recomendação ao vivo (BD) → schema do front (texto pronto)."""
+    return LiveRecoOut(
+        id=r.id, context=r.context, match_id=r.match_id, league=r.league or None,
+        home_team=r.home_team, away_team=r.away_team, minute=r.minute,
+        home_score=r.home_score, away_score=r.away_score,
+        type=r.rec_type, market=r.market, line=r.line, odd=r.odd,
+        confidence=r.confidence, recommendation=r.recommendation, reason=r.reason,
+        stats_used=r.stats_used, status=r.status, result=r.result,
+        created_at=_iso(r.created_at) or "", updated_at=_iso(r.updated_at),
     )
 
 

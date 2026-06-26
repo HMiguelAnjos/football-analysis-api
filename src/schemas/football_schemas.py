@@ -306,6 +306,31 @@ class RecommendationOut(BaseModel):
     player_number: Optional[int] = None
 
 
+# ─── Recomendações AO VIVO (in-play, foco escanteios) ────────────────────
+class LiveRecoOut(BaseModel):
+    id: int
+    context: str = "general"
+    match_id: int
+    league: Optional[str] = None
+    home_team: str
+    away_team: str
+    minute: Optional[int] = None
+    home_score: Optional[int] = None
+    away_score: Optional[int] = None
+    type: str                              # rec_type (corners_over, ...)
+    market: str
+    line: Optional[float] = None
+    odd: Optional[float] = None
+    confidence: float                      # 0-10
+    recommendation: str
+    reason: str
+    stats_used: Optional[dict] = None
+    status: str
+    result: str                            # pending | green | red | void
+    created_at: str
+    updated_at: Optional[str] = None
+
+
 # ─── Entradas ao vivo (analista) ─────────────────────────────────────────
 class LivePickOut(BaseModel):
     id: int

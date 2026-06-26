@@ -162,6 +162,63 @@ class FootballPickResult(Base):
     )
 
 
+# ─── Recomendações AO VIVO (in-play, foco escanteios) ────────────────────
+
+
+class FootballLiveRecommendation(Base):
+    """Recomendação gerada DURANTE a partida (in-play), priorizando mercados de
+    escanteios. Persiste tudo o que sustentou a decisão (stats ao vivo) pra
+    auditoria e settlement.
+
+    rec_type: corners_over | team_corners_over | next_corner | shots_on_target
+              | goal_pressure | avoid_entry
+    status:   pending (ainda valendo) | settled | expired
+    result:   pending | green | red | void
+    """
+    __tablename__ = "football_live_recommendations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    context: Mapped[str] = mapped_column(String(20), nullable=False, default="general", index=True)
+
+    # ── Jogo + estado no momento da recomendação ─────────────────────────
+    match_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    league: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    home_team: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    away_team: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    minute: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    home_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    away_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # ── Recomendação ─────────────────────────────────────────────────────
+    rec_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(60), nullable=False)
+    line: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    odd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 0-10
+    recommendation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    stats_used: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # ── Ciclo de vida / resultado ────────────────────────────────────────
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    result: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False, index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False,
+    )
+    settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # 1 linha por (jogo, tipo, linha) — re-gerar no mesmo tick faz UPDATE
+        # (atualiza minuto/confiança/stats), não duplica.
+        UniqueConstraint("match_id", "rec_type", "line",
+                         name="uq_football_live_rec_match_type_line"),
+        Index("idx_football_live_rec_status", "status", "created_at"),
+    )
+
+
 # ─── Snapshot / cache de dados de provider (corta chamadas externas) ──────
 
 

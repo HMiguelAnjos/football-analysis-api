@@ -41,6 +41,7 @@ from src.schemas.football_schemas import (
     LivePickCreate,
     LivePickOut,
     LivePickUpdate,
+    LiveRecoOut,
     MarketLineSchema,
     MatchListResponse,
     MatchOddsSchema,
@@ -130,6 +131,13 @@ async def lifespan(app: FastAPI):
             await start_live_odds_worker()
         except Exception as exc:  # noqa: BLE001
             logger.warning("live odds worker não subiu (%s)", exc)
+
+    if config.ENABLE_LIVE_RECO_WORKER:
+        try:
+            from src.workers.live_reco_worker import start_live_reco_worker
+            await start_live_reco_worker()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("live reco worker não subiu (%s)", exc)
     yield
 
 
@@ -549,6 +557,41 @@ def live_shots(limit: int = Query(40, ge=1, le=100)):
     except Exception as exc:  # noqa: BLE001
         logger.warning("live shots falhou: %s", exc)
         return []
+
+
+# ── Recomendações AO VIVO persistidas (foco escanteios) ─────────────────────
+@app.get("/football/live-recommendations/match/{match_id}", response_model=list[LiveRecoOut])
+def live_recs_by_match(match_id: int, db: Session = Depends(get_db)):
+    from src.services import live_reco_service as lrs
+    return [front_mappers.live_reco_to_out(r) for r in lrs.list_by_match(db, match_id)]
+
+
+@app.get("/football/live-recommendations/pending", response_model=list[LiveRecoOut])
+def live_recs_pending(db: Session = Depends(get_db),
+                      context: str | None = Query(None)):
+    from src.services import live_reco_service as lrs
+    return [front_mappers.live_reco_to_out(r) for r in lrs.list_pending(db, context)]
+
+
+@app.patch("/football/live-recommendations/{rec_id}/status", response_model=LiveRecoOut)
+def live_rec_set_status(rec_id: int, status: str = Query(...),
+                        db: Session = Depends(get_db)):
+    from src.services import live_reco_service as lrs
+    row = lrs.update_status(db, rec_id, status)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Recomendação não encontrada")
+    return front_mappers.live_reco_to_out(row)
+
+
+@app.patch("/football/live-recommendations/{rec_id}/result", response_model=LiveRecoOut)
+def live_rec_set_result(rec_id: int,
+                        result: str = Query(..., pattern="^(green|red|void|pending)$"),
+                        db: Session = Depends(get_db)):
+    from src.services import live_reco_service as lrs
+    row = lrs.set_result(db, rec_id, result)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Recomendação não encontrada")
+    return front_mappers.live_reco_to_out(row)
 
 
 @app.get("/football/recommendations/live", response_model=list[LivePickOut])
