@@ -20,13 +20,14 @@ from sqlalchemy.orm import Session
 from src.db.models import FootballLiveRecommendation
 from src.recommendation.live_engine import (
     AVOID_ENTRY, CORNERS_OVER, TEAM_CORNERS_OVER,
-    LiveStats, LivePick, TeamLive, classify_live,
+    LiveStats, LivePick, TeamLive, classify_live_all,
 )
 
 logger = logging.getLogger(__name__)
 
 # Campos cumulativos rastreados pra calcular deltas (últimos ~10 min).
-_DELTA_KEYS = ("corner_kicks", "total_shots", "shots_insidebox", "blocked_shots", "expected_goals")
+_DELTA_KEYS = ("corner_kicks", "total_shots", "shots_on_goal", "shots_insidebox",
+               "blocked_shots", "expected_goals")
 
 
 def _g(d: dict, key: str) -> float:
@@ -76,6 +77,7 @@ def _team_live(name: str, cur: dict, dl: dict) -> TeamLive:
         xg=_g(cur, "expected_goals"),
         d_corners=dl.get("corner_kicks", 0.0),
         d_shots=dl.get("total_shots", 0.0),
+        d_shots_on=dl.get("shots_on_goal", 0.0),
         d_shots_insidebox=dl.get("shots_insidebox", 0.0),
         d_blocked=dl.get("blocked_shots", 0.0),
         d_xg=dl.get("expected_goals", 0.0),
@@ -144,9 +146,9 @@ def generate_for_live_matches(db: Session, data_service, tracker: LiveStatsTrack
                 continue
             cur = {"home": st.home, "away": st.away}
             deltas = tracker.update(m.id, m.minute or 0, cur)
-            pick = classify_live(build_live_stats(m, st, deltas))
+            picks = classify_live_all(build_live_stats(m, st, deltas))
             stats_out["matches"] += 1
-            if pick.rec_type != AVOID_ENTRY:
+            for pick in picks:                       # corners + chutes/gol do time
                 try:
                     upsert_live_rec(db, m, ctx, pick)
                     stats_out["saved"] += 1

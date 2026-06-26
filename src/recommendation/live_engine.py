@@ -45,6 +45,7 @@ class TeamLive:
     # Deltas dos últimos ~10 min (preenchidos pelo worker via snapshots).
     d_corners: float = 0.0
     d_shots: float = 0.0
+    d_shots_on: float = 0.0
     d_shots_insidebox: float = 0.0
     d_blocked: float = 0.0
     d_xg: float = 0.0
@@ -163,9 +164,9 @@ def _stats_used(s: LiveStats) -> dict:
     }
 
 
-def classify_live(s: LiveStats) -> LivePick:
-    """Melhor entrada ao vivo pro jogo (escanteios primeiro). Sempre devolve um
-    LivePick — avoid_entry quando nada tem confiança suficiente."""
+def _build_candidates(s: LiveStats) -> list[LivePick]:
+    """Todas as entradas que o jogo sugere agora (escanteios + time atacando em
+    chutes/gols), cada uma com sua confiança 0-10."""
     minute = s.minute or 0
     minutes_left = max(90 - minute, 0)
     total_corners = s.home.corners + s.away.corners
@@ -223,7 +224,21 @@ def classify_live(s: LiveStats) -> LivePick:
             stats,
         ))
 
-    # ── 4/5) Chutes no gol / pressão de gol (SECUNDÁRIO) ─────────────────
+    # ── 4) Time atacando muito → CHUTES NO GOL do time ───────────────────
+    sot_pace = 0.6 * dom.d_shots_on / 10.0 + 0.4 * dom.shots_on / max(minute, 1)
+    sot_proj = dom.shots_on + sot_pace * minutes_left
+    sline = _suggest_corner_line(dom.shots_on, sot_proj)   # mesma lógica de linha .5
+    if sline is not None and minutes_left >= 5 and dom_press >= 3.5:
+        conf = _team_press_conf(dom_press, need_dom, sot_proj - sline, s)
+        candidates.append(LivePick(
+            SHOTS_ON_TARGET, f"{dom.name} over {sline:g} chutes no gol", sline, None, conf,
+            f"{dom.name} chutando muito a gol.",
+            (f"{dom.name} pressionando: {stats['shots_insidebox_last_10min']:g} chutes na área e "
+             f"{dom.shots_on} no gol; projeção ~{sot_proj:.0f}. Tende a finalizar mais."),
+            stats,
+        ))
+
+    # ── 5) Time atacando muito → PRESSÃO DE GOL ──────────────────────────
     shot_press = dom.d_shots_insidebox + dom.d_xg * 3.0 + dom.d_blocked
     if shot_press >= 4.0 and minutes_left >= 5:
         conf = min(round(4.0 + min(shot_press / 5.0, 1.0) * 3.5 + need_dom, 1), 10.0)
@@ -235,9 +250,32 @@ def classify_live(s: LiveStats) -> LivePick:
             stats,
         ))
 
-    # Melhor candidato; se nenhum atinge o mínimo → avoid_entry.
+    return candidates
+
+
+def _team_press_conf(press: float, need: float, margin: float, s: LiveStats) -> float:
+    """Confiança 0-10 pra entradas de TIME ATACANDO (chutes/gol)."""
+    minute = max(s.minute, 1)
+    score = 3.0 + min(press / 6.0, 1.0) * 3.5      # pressão recente (base + até 3.5)
+    score += need * 1.5                             # time precisa do resultado
+    score += min(max(margin, 0.0) / 2.0, 1.0) * 1.0
+    open_game = (s.home.total_shots + s.away.total_shots) / minute
+    score += min(open_game / 0.35, 1.0) * 1.0
+    if (s.home.d_shots + s.away.d_shots) < 1.0:
+        score -= 2.5                                # jogo parado
+    if s.minute >= 85 and press < 3.0:
+        score -= 1.5
+    return max(0.0, min(round(score, 1), 10.0))
+
+
+def classify_live(s: LiveStats) -> LivePick:
+    """Melhor entrada ao vivo do jogo (escanteios primeiro). avoid_entry quando
+    nada atinge a confiança mínima."""
+    candidates = _build_candidates(s)
     best = max(candidates, key=lambda c: c.confidence, default=None)
     if best is None or best.confidence < MIN_CONFIDENCE:
+        minute = s.minute or 0
+        stats = _stats_used(s)
         return LivePick(
             AVOID_ENTRY, "Sem entrada", None, None,
             round(best.confidence, 1) if best else 0.0,
@@ -248,3 +286,14 @@ def classify_live(s: LiveStats) -> LivePick:
             stats,
         )
     return best
+
+
+def classify_live_all(s: LiveStats) -> list[LivePick]:
+    """TODAS as entradas com confiança suficiente (escanteios + time atacando em
+    chutes/gols), da maior pra menor. Vazio quando nada qualifica."""
+    qualifying = [c for c in _build_candidates(s) if c.confidence >= MIN_CONFIDENCE]
+    # 1 por tipo (melhor confiança), ordenado.
+    by_type: dict[str, LivePick] = {}
+    for c in sorted(qualifying, key=lambda c: c.confidence, reverse=True):
+        by_type.setdefault(c.rec_type, c)
+    return sorted(by_type.values(), key=lambda c: c.confidence, reverse=True)
