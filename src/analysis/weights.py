@@ -149,3 +149,28 @@ DEFAULT_LINES = {
     "cards": 4.5,
     "shots_on_target": 4.5,
 }
+
+# ─── AO VIVO ─────────────────────────────────────────────────────────────────
+# Faixas de normalização de estatísticas ACUMULADAS no jogo (não por 90).
+LIVE_NORM: dict[str, tuple[float, float]] = {
+    "insidebox": (0.0, 22.0),
+    "shots_on": (0.0, 8.0),
+    "corners": (0.0, 10.0),
+    "blocked": (0.0, 6.0),
+    "possession": (35.0, 65.0),
+    "live_xg_total": (0.4, 3.5),
+    "shots_on_total": (2.0, 12.0),
+    "fouls_total": (8.0, 32.0),
+    "cards_total": (1.0, 8.0),
+}
+# Pressão ofensiva AO VIVO de um lado (insidebox + chutes no alvo + cantos...).
+LIVE_PRESSURE = {
+    "insidebox": 0.30, "shots_on": 0.25, "corners": 0.20,
+    "blocked": 0.10, "possession": 0.15,
+}
+# Combinação por mercado ao vivo (edgeScore 0–100).
+LIVE_CORNERS = {"game_state": 0.30, "live_pressure": 0.45, "recent_pressure": 0.25}
+LIVE_GOALS = {"live_xg": 0.35, "shots_on": 0.25, "open_game": 0.20, "def_ceding": 0.20}
+LIVE_CARDS = {"cards_tension": 0.40, "fouls": 0.25, "tight_2h": 0.20, "context": 0.15}
+# Janela de minuto recomendável p/ escanteios ao vivo (fora disso, não recomenda).
+LIVE_CORNERS_MINUTE = (22, 83)

@@ -17,6 +17,7 @@ from src.analysis.grade import confidence, grade
 from src.analysis.helpers import (
     clamp, invert_score, normalize, safe_divide, weighted_average,
 )
+from src.analysis.live import LiveRecommendationEngine
 from src.analysis.markets import AnalysisRecommendation, MarketRecommendationEngine
 from src.analysis.scores import FootballAnalysisEngine, ScoreResult
 
@@ -24,4 +25,5 @@ __all__ = [
     "clamp", "invert_score", "normalize", "safe_divide", "weighted_average",
     "FootballAnalysisEngine", "ScoreResult",
     "MarketRecommendationEngine", "AnalysisRecommendation", "grade", "confidence",
+    "LiveRecommendationEngine",
 ]

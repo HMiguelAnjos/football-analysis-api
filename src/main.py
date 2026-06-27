@@ -581,6 +581,17 @@ def live_goals(limit: int = Query(40, ge=1, le=100)):
         return []
 
 
+@app.get("/football/live-analysis", response_model=list[AnalysisRecommendationOut])
+def live_analysis_recommendations(limit: int = Query(30, ge=1, le=100),
+                                  include_avoid: bool = Query(False)):
+    """Engine de ANÁLISE (scores + grade) AO VIVO — escanteios/gols/cartões."""
+    try:
+        return data_service.live_analysis(limit=limit, include_avoid=include_avoid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("live analysis falhou: %s", exc)
+        return []
+
+
 # ── Recomendações AO VIVO persistidas (foco escanteios) ─────────────────────
 @app.get("/football/live-recommendations/match/{match_id}", response_model=list[LiveRecoOut])
 def live_recs_by_match(match_id: int, db: Session = Depends(get_db)):
@@ -928,6 +939,18 @@ def wc_analysis(limit: int = Query(30, ge=1, le=100),
                                                    include_avoid=include_avoid)
     except Exception as exc:  # noqa: BLE001
         logger.warning("wc analysis falhou: %s", exc)
+        return []
+
+
+@wc.get("/live-analysis", response_model=list[AnalysisRecommendationOut])
+def wc_live_analysis(limit: int = Query(30, ge=1, le=100),
+                     include_avoid: bool = Query(False)):
+    """Engine de ANÁLISE (scores + grade) AO VIVO da Copa."""
+    try:
+        return data_service.live_analysis(context=_WC, limit=limit,
+                                          include_avoid=include_avoid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wc live analysis falhou: %s", exc)
         return []
 
 

@@ -668,6 +668,67 @@ class FootballDataService:
         self._odds_cache.set(ck, out, config.LIVE_FEED_TTL * 8)  # pré-jogo muda pouco
         return out[:limit]
 
+    def live_analysis(self, *, context: str = "general", limit: int = 30,
+                      include_avoid: bool = False):
+        """Recomendações AO VIVO da ENGINE DE ANÁLISE (LiveGameStateScore +
+        regras de escanteios/gols/cartões da seção 5). Monta LiveFeatures das
+        estatísticas ao vivo que já temos. MODO COMPLEMENTAR ao live_*."""
+        from src.analysis.features import LiveFeatures
+        from src.analysis.helpers import normalize as _normalize
+        from src.analysis.live import LiveRecommendationEngine
+
+        ck = f"analysisfeed:live:{context}:{int(include_avoid)}"
+        cached = self._odds_cache.get(ck)
+        if cached is not None:
+            return cached[:limit]
+
+        def _g(d, key):
+            return d.get(key) if isinstance(d, dict) else None
+
+        def _cards(d):
+            if not isinstance(d, dict):
+                return None
+            y, r = d.get("yellow_cards"), d.get("red_cards")
+            if y is None and r is None:
+                return None
+            return (y or 0) + (r or 0)
+
+        eng = LiveRecommendationEngine()
+        out = []
+        for m in self.live_matches(context):
+            if m.home_goals is None or m.away_goals is None:
+                continue
+            stats = self._live_stats(m, context)
+            mom_h, mom_a = self._momentum(m, context)
+            red_h, red_a = self._red_cards(m, context)
+            h = (stats.home if stats else {}) or {}
+            a = (stats.away if stats else {}) or {}
+            lf = LiveFeatures(
+                minute=m.minute or 0, home_score=m.home_goals, away_score=m.away_goals,
+                shots_home=_g(h, "total_shots"), shots_away=_g(a, "total_shots"),
+                shots_on_home=_g(h, "shots_on_goal"), shots_on_away=_g(a, "shots_on_goal"),
+                xg_home=_g(h, "expected_goals"), xg_away=_g(a, "expected_goals"),
+                corners_home=_g(h, "corner_kicks"), corners_away=_g(a, "corner_kicks"),
+                insidebox_home=_g(h, "shots_insidebox"), insidebox_away=_g(a, "shots_insidebox"),
+                blocked_home=_g(h, "blocked_shots"), blocked_away=_g(a, "blocked_shots"),
+                possession_home=_g(h, "ball_possession"), possession_away=_g(a, "ball_possession"),
+                fouls_home=_g(h, "fouls"), fouls_away=_g(a, "fouls"),
+                cards_home=_cards(h), cards_away=_cards(a),
+                red_home=red_h, red_away=red_a,
+                momentum_home=mom_h, momentum_away=mom_a,
+                recent_pressure_home=_normalize(mom_h, 0.85, 1.3),
+                recent_pressure_away=_normalize(mom_a, 0.85, 1.3),
+            )
+            knockout = bool(m.stage and m.stage != "group")
+            recs = eng.recommend_live(
+                lf, match_id=m.id, home_name=m.home_team.name,
+                away_name=m.away_team.name, knockout=knockout,
+                include_avoid=include_avoid)
+            out.extend(self._analysis_out(m, r, context) for r in recs)
+        out.sort(key=lambda r: r.confidence, reverse=True)
+        self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
+        return out[:limit]
+
     def _analysis_out(self, m: Match, r, context: str):
         """AnalysisRecommendation (engine) → AnalysisRecommendationOut (contrato)."""
         from src.schemas.football_schemas import AnalysisRecommendationOut
