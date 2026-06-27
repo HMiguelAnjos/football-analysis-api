@@ -454,10 +454,11 @@ class FootballDataService:
         """Probabilidades do modelo + odd justa (+ odd/edge se houver odds) pros
         principais mercados de gols do jogo. Base dos blocos 'Probabilidades' e
         'Mercados' da análise."""
+        import math
         import statistics as _st
         from src.probability import build_score_matrix, edge as _edge
         from src.probability.markets import (
-            btts, double_chance, draw_no_bet, match_winner, over_under,
+            btts, double_chance, draw_no_bet, match_winner, over_under, team_totals,
         )
         from src.providers.base import TeamForm
         from src.schemas.football_schemas import MarketLineSchema
@@ -467,7 +468,8 @@ class FootballDataService:
             return []
         hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
         af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
-        sm = build_score_matrix(*self._lambdas(m, hf, af, context))
+        lam_h, lam_a = self._lambdas(m, hf, af, context)
+        sm = build_score_matrix(lam_h, lam_a)
 
         odd_map: dict[tuple, list[float]] = {}
         odds = self.match_odds_domain(m, context=context)
@@ -502,6 +504,12 @@ class FootballDataService:
         b = btts(sm)
         add("btts", "yes", b["yes"])
         add("btts", "no", b["no"])
+        # Discrepância: time marca 2+ (team total over 1.5) — favorito domina.
+        add("team_total", "home", team_totals(sm, 1.5, home=True)["over"], 1.5)
+        add("team_total", "away", team_totals(sm, 1.5, home=False)["over"], 1.5)
+        # Gol cedo: prob de sair gol no 1º tempo (~45% dos gols esperados saem no 1T).
+        p_1h = 1.0 - math.exp(-0.45 * (lam_h + lam_a))
+        add("first_half_goal", "yes", p_1h)
 
         # Calibração do edge: de-vig + blend modelo×mercado por grupo de mercado;
         # edge irreal (> MAX_EDGE = erro do modelo) vira None (mostra "—").
@@ -562,6 +570,10 @@ class FootballDataService:
                     "home_away": f"{home} ou {away}"}.get(selection, selection)
         if market == "dnb":
             return {"home": f"{home} (DNB)", "away": f"{away} (DNB)"}.get(selection, selection)
+        if market == "team_total":
+            return {"home": f"{home} marca 2+", "away": f"{away} marca 2+"}.get(selection, selection)
+        if market == "first_half_goal":
+            return "Gol no 1º tempo"
         return selection
 
     def opportunities(self, *, context: str = "general", limit: int = 30,
@@ -578,9 +590,10 @@ class FootballDataService:
 
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
-        # Dupla chance entra pra dar VOLUME de qualidade (favorito bate ≥60%
-        # fácil) — sem isso o pré-jogo de mercado fica raso vs os props.
-        focus = {"1x2", "over_under", "btts", "double_chance"}
+        # "Coisas que podem acontecer": dupla chance (favorito não perde),
+        # team_total (discrepância → favorito marca 2+) e gol no 1º tempo (gol
+        # cedo), além de 1x2/over-under/BTTS.
+        focus = {"1x2", "over_under", "btts", "double_chance", "team_total", "first_half_goal"}
 
         matches = self._upcoming_matches(context, only_future=True)
         out = []
