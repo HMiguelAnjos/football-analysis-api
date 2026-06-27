@@ -556,6 +556,12 @@ class FootballDataService:
             return "Over" if selection == "over" else "Under"
         if market == "btts":
             return "Sim" if selection == "yes" else "Não"
+        if market == "double_chance":
+            return {"home_draw": f"{home} ou empate",
+                    "draw_away": f"empate ou {away}",
+                    "home_away": f"{home} ou {away}"}.get(selection, selection)
+        if market == "dnb":
+            return {"home": f"{home} (DNB)", "away": f"{away} (DNB)"}.get(selection, selection)
         return selection
 
     def opportunities(self, *, context: str = "general", limit: int = 30,
@@ -572,7 +578,9 @@ class FootballDataService:
 
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
-        focus = {"1x2", "over_under", "btts"}
+        # Dupla chance entra pra dar VOLUME de qualidade (favorito bate ≥60%
+        # fácil) — sem isso o pré-jogo de mercado fica raso vs os props.
+        focus = {"1x2", "over_under", "btts", "double_chance"}
 
         matches = self._upcoming_matches(context, only_future=True)
         out = []
@@ -583,6 +591,7 @@ class FootballDataService:
             hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
             af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
             sample = min(hf.matches_played, af.matches_played)
+            match_picks = []
             for r in rows:
                 if r.market not in focus:
                     continue
@@ -590,13 +599,19 @@ class FootballDataService:
                 # quase-certezas triviais — não servem como recomendação.
                 if r.market == "over_under" and r.line != 2.5:
                     continue
+                # "Casa ou Fora" (sem empate) é pouco intuitivo — fora.
+                if r.market == "double_chance" and r.selection == "home_away":
+                    continue
                 # Prob exibida: coerente com o edge quando há odds; senão, modelo puro.
                 prob = ((1 + r.edge) / r.odd) if (r.edge is not None and r.odd) else (r.model_prob or 0.0)
                 if prob < config.MIN_PICK_PROB:
                     continue
                 if r.odd is not None and not (min_odd <= r.odd <= max_odd):
                     continue
-                out.append(self._prob_out(m, r, prob, sample, context))
+                match_picks.append(self._prob_out(m, r, prob, sample, context))
+            # Até 3 entradas por jogo (variedade entre partidas, sem flood).
+            match_picks.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
+            out.extend(match_picks[:3])
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
 
