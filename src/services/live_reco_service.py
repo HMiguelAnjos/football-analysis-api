@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 
 from src.db.models import FootballLiveRecommendation
 from src.recommendation.live_engine import (
-    AVOID_ENTRY, CORNERS_OVER, TEAM_CORNERS_OVER,
-    LiveStats, LivePick, TeamLive, classify_live_all,
+    AVOID_ENTRY, CORNERS_OVER, GOAL_PRESSURE, NEXT_CORNER, SHOTS_ON_TARGET,
+    TEAM_CORNERS_OVER, LiveStats, LivePick, TeamLive, classify_live_all,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,31 +158,69 @@ def generate_for_live_matches(db: Session, data_service, tracker: LiveStatsTrack
     return stats_out
 
 
+def _side_of(r: FootballLiveRecommendation) -> str | None:
+    """Lado do time citado na recomendação (home/away) a partir do texto."""
+    txt = f"{r.market or ''} {r.recommendation or ''}"
+    if r.home_team and r.home_team in txt:
+        return "home"
+    if r.away_team and r.away_team in txt:
+        return "away"
+    return None
+
+
+def _score_at(r: FootballLiveRecommendation, side: str) -> int:
+    """Gols do lado no momento da recomendação (do stats_used['score'])."""
+    raw = (r.stats_used or {}).get("score", "")
+    try:
+        h, a = str(raw).split("-")
+        return int(h if side == "home" else a)
+    except (ValueError, AttributeError):
+        return 0
+
+
 def settle_finished(db: Session, data_service) -> dict:
-    """Liquida over escanteios pendentes de jogos ENCERRADOS (total final vs linha)."""
+    """Liquida TODAS as recomendações ao vivo pendentes de jogos ENCERRADOS,
+    comparando a linha/estado da entrada com as estatísticas FINAIS do jogo."""
     rows = list(db.scalars(select(FootballLiveRecommendation).where(
         FootballLiveRecommendation.result == "pending",
-        FootballLiveRecommendation.rec_type.in_([CORNERS_OVER, TEAM_CORNERS_OVER]),
     )).all())
     out = {"settled": 0}
     by_match: dict[int, list] = {}
     for r in rows:
         by_match.setdefault(r.match_id, []).append(r)
+
     for match_id, recs in by_match.items():
         m = data_service.match_domain(match_id, context=recs[0].context)
         if m is None or m.status != "finished":
             continue
-        stats = data_service._live_stats(m, recs[0].context) if hasattr(data_service, "_live_stats") else None
+        stats = data_service._live_stats(m, recs[0].context)
         if stats is None:
             continue
-        total_corners = _g(stats.home, "corner_kicks") + _g(stats.away, "corner_kicks")
+        corners = {"home": _g(stats.home, "corner_kicks"), "away": _g(stats.away, "corner_kicks")}
+        sot = {"home": _g(stats.home, "shots_on_goal"), "away": _g(stats.away, "shots_on_goal")}
+        goals = {"home": int(m.home_goals or 0), "away": int(m.away_goals or 0)}
+        total_corners = corners["home"] + corners["away"]
+
         for r in recs:
+            side = _side_of(r)
+            result = None
             if r.rec_type == CORNERS_OVER and r.line is not None:
-                r.result = "green" if total_corners > r.line else "red"
-                r.status = "settled"
-                r.settled_at = datetime.now(timezone.utc)
-                out["settled"] += 1
-            # team_corners_over: settle manual (não sabemos o lado só pelo texto).
+                result = "green" if total_corners > r.line else "red"
+            elif r.rec_type == TEAM_CORNERS_OVER and side and r.line is not None:
+                result = "green" if corners[side] > r.line else "red"
+            elif r.rec_type == SHOTS_ON_TARGET and side and r.line is not None:
+                result = "green" if sot[side] > r.line else "red"
+            elif r.rec_type == NEXT_CORNER and side:
+                at = (r.stats_used or {}).get(f"corners_{side}", 0) or 0
+                result = "green" if corners[side] > at else "red"
+            elif r.rec_type == GOAL_PRESSURE and side:
+                result = "green" if goals[side] > _score_at(r, side) else "red"
+            if result is None:
+                continue
+            r.result = result
+            r.status = "settled"
+            r.settled_at = datetime.now(timezone.utc)
+            out["settled"] += 1
     db.commit()
     return out
 
