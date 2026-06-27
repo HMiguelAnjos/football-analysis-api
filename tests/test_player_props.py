@@ -59,6 +59,22 @@ def test_opponent_strength_scales_projection():
     assert pw.projection > ps.projection
 
 
+def test_generator_produces_tackles_picks():
+    match = _match()
+    home = TeamForm(team_id=1, matches_played=8, goals_for=1.5, goals_against=1.2)
+    # Visitante ataca bastante → time da casa desarma mais.
+    away = TeamForm(team_id=2, matches_played=8, goals_for=2.0, goals_against=1.0)
+    cdm = PlayerSchema(id=77, name="Volante", team_id=1, appearances=8, tackles=28)
+    picks = generate_player_props(match=match, home_form=home, away_form=away,
+                                  home_players=[cdm], away_players=[])
+    tk = [p for p in picks if p.market == "player_tackles"]
+    assert tk, "deveria gerar prop de desarmes"
+    p = tk[0]
+    assert "desarmes" in p.selection.lower()
+    assert p.line and p.line < p.projection
+    assert 0 < p.model_probability <= 1
+
+
 def test_generation_persists_player_props(db_session):
     # Modo fixtures: jogos gerais (Liverpool=40/City=50) têm jogadores mock
     # (Salah=40, Haaland=50) → gera props.

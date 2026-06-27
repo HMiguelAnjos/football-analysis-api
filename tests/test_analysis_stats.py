@@ -42,6 +42,23 @@ def test_aggregate_ignores_missing_per_key():
     assert adv.xga is None                     # nunca veio
 
 
+def test_aggregate_prefers_event_cards():
+    # Cartões REAIS via eventos (chave "cards") têm prioridade sobre a estatística.
+    samples = [
+        {"own": {"expected_goals": 1.0}, "opp": {}, "cards": 3},
+        {"own": {"expected_goals": 1.0}, "opp": {}, "cards": 5},
+    ]
+    adv = aggregate_advanced(samples)
+    assert adv.cards_for == 4.0                # (3+5)/2 dos eventos
+
+
+def test_aggregate_cards_none_without_yellow_or_events():
+    # Sem eventos e sem amarelo (só vermelho na estatística) → não agrega cartões.
+    samples = [{"own": {"red_cards": 0}, "opp": {}}]
+    adv = aggregate_advanced(samples)
+    assert adv.cards_for is None
+
+
 def test_aggregate_empty_is_neutral():
     adv = aggregate_advanced([])
     assert adv.sample == 0 and adv.xg is None

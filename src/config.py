@@ -219,6 +219,9 @@ CATALOG_CACHE_TTL: int = int(os.getenv("CATALOG_CACHE_TTL", str(24 * 3600)))
 # e o usuário pediu pra deixar de fora). Degrada gracioso: sem stat, fallback-50.
 ENABLE_STATS_AGGREGATION: bool = _flag("ENABLE_STATS_AGGREGATION", "1")
 STATS_AGG_LAST_N: int = int(os.getenv("STATS_AGG_LAST_N", "10"))
+# Cartões reais por jogo via /fixtures/events (a estatística agregada não traz
+# amarelos). +1 chamada por jogo na agregação (cacheada). Pôr 0 pra economizar.
+ENABLE_CARDS_FROM_EVENTS: bool = _flag("ENABLE_CARDS_FROM_EVENTS", "1")
 # Agregado por time: cache médio (forma muda devagar). Stats de UM jogo
 # finalizado nunca mudam → cache bem longo (compartilhado entre os dois times).
 STATS_AGG_TTL: int = int(os.getenv("STATS_AGG_TTL", str(6 * 3600)))

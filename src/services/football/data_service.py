@@ -693,6 +693,26 @@ class FootballDataService:
         self._disk.set(key, data, config.STATS_MATCH_TTL)
         return data
 
+    def _match_cards_cached(self, match_id: int, context: str) -> dict:
+        """Cartões (amarelo+vermelho) por team_id no jogo, via eventos — cache em
+        DISCO longo (imutável), COMPARTILHADO entre os dois times. {} se sem dado
+        ou se ENABLE_CARDS_FROM_EVENTS=0."""
+        if not config.ENABLE_CARDS_FROM_EVENTS:
+            return {}
+        key = f"matchcards:{context}:{match_id}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return {int(k): v for k, v in cached.items()}
+        getter = getattr(self._football(context), "get_match_cards", None)
+        data: dict = {}
+        if getter is not None:
+            try:
+                data = getter(match_id) or {}
+            except Exception:  # noqa: BLE001
+                data = {}
+        self._disk.set(key, data, config.STATS_MATCH_TTL)
+        return data
+
     def _team_advanced_stats(self, team_id: int, context: str):
         """Médias por jogo (xG, finalizações no alvo, escanteios, cartões, posse)
         dos últimos N jogos do time. Cacheado em disco. None se sem dado —
@@ -723,8 +743,14 @@ class FootballDataService:
                 is_home = mm.home_team.id == team_id
                 own = stats.get("home" if is_home else "away") or {}
                 opp = stats.get("away" if is_home else "home") or {}
-                if own or opp:
-                    samples.append({"own": own, "opp": opp})
+                if not (own or opp):
+                    continue
+                sample = {"own": own, "opp": opp}
+                # Cartões REAIS via eventos (a estatística não traz amarelos).
+                cards = self._match_cards_cached(mm.id, context).get(team_id)
+                if cards is not None:
+                    sample["cards"] = cards
+                samples.append(sample)
 
         adv = aggregate_advanced(samples)
         self._disk.set(key, dataclasses.asdict(adv) if adv.sample else {},

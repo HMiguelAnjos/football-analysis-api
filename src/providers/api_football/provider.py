@@ -488,6 +488,20 @@ class ApiFootballProvider:
                 out[tid] = out.get(tid, 0) + 1
         return out
 
+    def get_match_cards(self, fixture_id: int) -> dict[int, int]:
+        """Total de cartões (amarelo + vermelho) por team_id no jogo, via eventos
+        (1 chamada: fixtures/events). A estatística agregada não traz amarelos —
+        os eventos sim. {} se a fonte não fornecer."""
+        items = self._client.response("fixtures/events", {"fixture": fixture_id})
+        out: dict[int, int] = {}
+        for ev in items:
+            if (ev.get("type") or "").lower() != "card":
+                continue
+            tid = int((ev.get("team", {}) or {}).get("id", 0) or 0)
+            if tid:
+                out[tid] = out.get(tid, 0) + 1
+        return out
+
     def get_live_player_shots(self, fixture_id: int) -> list[dict]:
         """Chutes de cada jogador NO JOGO atual (1 chamada: fixtures/players).
         Base do especialista em chutes a gol ao vivo. {} se a fonte não fornece."""

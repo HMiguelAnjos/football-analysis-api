@@ -70,9 +70,12 @@ def aggregate_advanced(samples: list[dict]) -> TeamAdvancedStats:
         return lambda s: s.get("opp", {}).get(key)
 
     def cards(s) -> Optional[float]:
-        # A api-football costuma NÃO trazer amarelos em /fixtures/statistics (só
-        # vermelhos). Contar só vermelhos daria ~0 e subestimaria a tensão —
-        # então só agrega quando o amarelo existe; senão deixa o fallback-50.
+        # Preferência: contagem REAL de cartões via eventos (chave "cards",
+        # amarelo+vermelho). Sem ela, a estatística agregada raramente traz
+        # amarelos (só vermelhos) → só usa se houver amarelo; senão fallback-50.
+        c = s.get("cards")
+        if c is not None:
+            return c
         d = s.get("own", {})
         y = d.get("yellow_cards")
         if y is None:

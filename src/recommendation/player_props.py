@@ -35,12 +35,14 @@ MIN_PROB = {
     "player_shots": 0.55,
     "anytime_scorer": 0.45,
     "player_assists": 0.45,
+    "player_tackles": 0.55,
 }
 _MARKET_LABEL = {
     "player_shots_on_target": "finalizações no gol",
     "player_shots": "finalizações",
     "anytime_scorer": "marcar a qualquer momento",
     "player_assists": "assistências",
+    "player_tackles": "desarmes",
 }
 
 
@@ -74,6 +76,15 @@ def _opp_label(scaler: float) -> str:
     if scaler <= 0.9:
         return "adversário forte defensivamente"
     return "confronto equilibrado"
+
+
+def _tackle_opp_label(opp_attack_scaler: float) -> str:
+    # Desarme é defensivo: quanto MAIS o adversário ataca, mais o time desarma.
+    if opp_attack_scaler >= 1.12:
+        return "adversário ataca muito"
+    if opp_attack_scaler <= 0.9:
+        return "adversário ataca pouco"
+    return "ritmo equilibrado"
 
 
 def _over_pick(player: PlayerSchema, team: str, market: str, per_game: float,
@@ -160,6 +171,21 @@ def _team_props(players: list[PlayerSchema], team: str, scaler: float) -> list[P
     return picks
 
 
+def _tackles_props(players: list[PlayerSchema], team: str,
+                   opp_attack_scaler: float) -> list[PropPick]:
+    """Desarmes (DEFENSIVO): top desarmadores do time, projeção escalada pelo
+    ATAQUE do adversário (mais ataque rival → mais desarmes)."""
+    opp = _tackle_opp_label(opp_attack_scaler)
+    picks: list[PropPick] = []
+    for p in sorted(players, key=lambda x: x.tackles or 0, reverse=True)[:TOP_N_PER_TEAM]:
+        pick = _over_pick(p, team, "player_tackles",
+                          _per_game(p.tackles or 0, p.appearances),
+                          opp_attack_scaler, opp)
+        if pick:
+            picks.append(pick)
+    return picks
+
+
 def generate_player_props(
     *,
     match,
@@ -169,11 +195,15 @@ def generate_player_props(
     away_players: list[PlayerSchema],
 ) -> list[PropPick]:
     """Player props recomendadas pro jogo, projetando a stat de cada jogador
-    ajustada pela força defensiva do adversário."""
+    ajustada pela força do adversário (ataque para finalizações/gols; ataque do
+    rival para desarmes)."""
     lam_h, lam_a = expected_goals(home_form, away_form)
     sh = _scaler(lam_h, home_form.goals_for)
     sa = _scaler(lam_a, away_form.goals_for)
     picks = _team_props(home_players, match.home_team.name, sh)
     picks += _team_props(away_players, match.away_team.name, sa)
+    # Desarmes: o time da CASA desarma o ataque do VISITANTE (escala sa) e vice-versa.
+    picks += _tackles_props(home_players, match.home_team.name, sa)
+    picks += _tackles_props(away_players, match.away_team.name, sh)
     picks.sort(key=lambda x: x.model_probability, reverse=True)
     return picks
