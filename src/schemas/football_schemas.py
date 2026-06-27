@@ -306,6 +306,9 @@ class RecommendationOut(BaseModel):
     player_number: Optional[int] = None
     # Selo de destaque (ex.: "Discrepância alta") quando o confronto é desigual.
     tag: Optional[str] = None
+    # Tiles do card AO VIVO de jogador (pressão, projeção, finalizações do time,
+    # finalizações na área, ritmo, valor, minuto, placar). None nos demais.
+    stats_used: Optional[dict] = None
 
 
 # ─── Recomendações da ENGINE DE ANÁLISE (scores) ─────────────────────────

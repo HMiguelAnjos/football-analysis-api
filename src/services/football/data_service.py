@@ -973,6 +973,37 @@ class FootballDataService:
             return (1.0, 1.0)
         return momentum_multipliers(st.home, st.away)
 
+    def _live_card_tiles(self, m: Match, side: str, mom: float, *, context: str,
+                         conf_label: str, projection=None, projection_delta=None) -> dict:
+        """Tiles do card AO VIVO de jogador (pressão, finalizações do time/na área,
+        ritmo, valor, minuto, placar) — só com DADO real das estatísticas ao vivo.
+        'Ataques perigosos' não existe na api-football → usamos finalizações na área."""
+        st = self._live_stats(m, context)
+        own = (st.home if side == "home" else st.away) if st else None
+        opp = (st.away if side == "home" else st.home) if st else None
+        own = own or {}
+        opp = opp or {}
+        pressure = round(max(0.0, min(100.0, (mom - 0.85) / 0.45 * 100)))
+        team_shots = own.get("total_shots")
+        box_shots = own.get("shots_insidebox")
+        total = (own.get("total_shots") or 0) + (opp.get("total_shots") or 0)
+        minute = max(m.minute or 1, 1)
+        pace = round(min(10.0, (total / minute) * 15), 1)
+        pace_label = "Rápido" if pace >= 6.5 else "Moderado" if pace >= 4 else "Lento"
+        pressure_label = "Alta" if pressure >= 60 else "Média" if pressure >= 40 else "Baixa"
+        stars = 4 if conf_label == "high" else 3 if conf_label == "medium" else 2
+        score = (f"{m.home_goals}-{m.away_goals}"
+                 if m.home_goals is not None and m.away_goals is not None else None)
+        return {
+            "minute": m.minute, "score": score,
+            "pressure": pressure, "pressure_label": pressure_label,
+            "projection": projection, "projection_delta": projection_delta,
+            "team_shots": int(team_shots) if team_shots is not None else None,
+            "box_shots": int(box_shots) if box_shots is not None else None,
+            "pace": pace, "pace_label": pace_label,
+            "value_stars": stars,
+        }
+
     def _live_player_shots(self, match_id: int, context: str) -> list[dict]:
         """get_live_player_shots cacheado curto (memória), COMPARTILHADO entre os
         feeds de chutes e gols ao vivo — evita dobrar as chamadas ao provider
@@ -1019,6 +1050,7 @@ class FootballDataService:
                 int(p.id): (p.shots_on_target / p.appearances if p.appearances else 0.0)
                 for p in pool
             }
+            num_by_id = {int(p.id): p.number for p in pool}
             mom_h, mom_a = self._momentum(m, context)
             minute = m.minute or 0
             minutes_left = remaining_fraction(minute) * 90.0
@@ -1041,18 +1073,24 @@ class FootballDataService:
                     line, prob = already + 0.5, p1
                 else:
                     continue
-                out.append(self._shot_out(m, lp, line, prob, already, rem, mom, context))
+                out.append(self._shot_out(m, lp, line, prob, already, rem, mom, context,
+                                          number=num_by_id.get(lp["player_id"])))
         out.sort(key=lambda r: r.model_prob or 0, reverse=True)
         self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
         return out[:limit]
 
-    def _shot_out(self, m: Match, lp: dict, line: float, prob: float,
-                  already: int, rem: float, mom: float, context: str) -> RecommendationOut:
+    def _shot_out(self, m: Match, lp: dict, line: float, prob: float, already: int,
+                  rem: float, mom: float, context: str, *, number=None) -> RecommendationOut:
         """Recomendação de chutes a gol ao vivo → RecommendationOut."""
         name = lp.get("name", "Jogador")
-        team_name = m.home_team.name if lp["team_id"] == m.home_team.id else m.away_team.name
+        is_home = lp["team_id"] == m.home_team.id
+        team_name = m.home_team.name if is_home else m.away_team.name
         minute = m.minute if m.minute is not None else 0
         mom_txt = " · time pressionando" if mom >= 1.08 else ""
+        conf = self._prob_confidence(prob)
+        tiles = self._live_card_tiles(
+            m, "home" if is_home else "away", mom, context=context, conf_label=conf,
+            projection=round(already + rem, 1), projection_delta=round(rem, 1))
         return RecommendationOut(
             id=0, match=f"{m.home_team.name} x {m.away_team.name}",
             match_id=m.id, league=m.league_name or None,
@@ -1060,14 +1098,14 @@ class FootballDataService:
             selection=f"{name} — Mais de {line:g} chutes no gol",
             line=line, odd=None, fair_odd=round(1 / prob, 2) if prob > 0 else None,
             model_prob=round(prob, 4), implied_prob=None, edge=None,
-            confidence=self._prob_confidence(prob),
+            confidence=conf,
             status="live", reason=(
                 f"AO VIVO {minute}' · {name} já tem {already} chute(s) no gol "
                 f"(projeção +{rem:.1f}{mom_txt}). {prob*100:.0f}% de superar {line:g}."
             ),
             bookmaker=None, created_at="", stage=m.stage, group=m.group,
             kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
-            context=context, team=team_name, player_number=None,
+            context=context, team=team_name, player_number=number, stats_used=tiles,
         )
 
     def live_goals(self, *, context: str = "general", limit: int = 40):
@@ -1104,6 +1142,7 @@ class FootballDataService:
                             if p.appearances else 0.0)
                 for p in pool
             }
+            num_by_id = {int(p.id): p.number for p in pool}
             taker_by_team: dict[int, int] = {}
             best_pen: dict[int, int] = {}
             for p in pool:
@@ -1129,17 +1168,20 @@ class FootballDataService:
                 prob = 1.0 - math.exp(-rem_lambda)
                 if prob < config.LIVE_GOAL_MIN_PROB:
                     continue
-                out.append(self._goal_out(m, lp, prob, mom, context,
-                                          is_taker=lp["player_id"] == taker_by_team.get(lp["team_id"])))
+                out.append(self._goal_out(
+                    m, lp, prob, mom, context,
+                    is_taker=lp["player_id"] == taker_by_team.get(lp["team_id"]),
+                    number=num_by_id.get(lp["player_id"])))
         out.sort(key=lambda r: r.model_prob or 0, reverse=True)
         self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
         return out[:limit]
 
     def _goal_out(self, m: Match, lp: dict, prob: float, mom: float,
-                  context: str, is_taker: bool = False) -> RecommendationOut:
+                  context: str, is_taker: bool = False, *, number=None) -> RecommendationOut:
         """Recomendação de 'jogador pode marcar' ao vivo → RecommendationOut."""
         name = lp.get("name", "Jogador")
-        team_name = m.home_team.name if lp["team_id"] == m.home_team.id else m.away_team.name
+        is_home = lp["team_id"] == m.home_team.id
+        team_name = m.home_team.name if is_home else m.away_team.name
         minute = m.minute if m.minute is not None else 0
         # Gol é raro: escala de confiança própria (50%+ = forte; 38%+ = média).
         conf = "high" if prob >= 0.50 else "medium" if prob >= 0.38 else "low"
@@ -1149,6 +1191,8 @@ class FootballDataService:
         if is_taker:
             notes.append("cobra os pênaltis")
         note_txt = (" · " + ", ".join(notes)) if notes else ""
+        tiles = self._live_card_tiles(
+            m, "home" if is_home else "away", mom, context=context, conf_label=conf)
         return RecommendationOut(
             id=0, match=f"{m.home_team.name} x {m.away_team.name}",
             match_id=m.id, league=m.league_name or None, market="anytime_scorer",
@@ -1161,7 +1205,7 @@ class FootballDataService:
             ),
             bookmaker=None, created_at="", stage=m.stage, group=m.group,
             kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
-            context=context, team=team_name, player_number=None,
+            context=context, team=team_name, player_number=number, stats_used=tiles,
         )
 
     def _red_cards(self, m: Match, context: str) -> tuple[int, int]:
