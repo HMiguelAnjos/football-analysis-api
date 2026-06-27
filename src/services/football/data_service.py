@@ -637,6 +637,51 @@ class FootballDataService:
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
 
+    def analysis_opportunities(self, *, context: str = "general", limit: int = 30,
+                               include_avoid: bool = False):
+        """Recomendações PRÉ-JOGO da ENGINE DE ANÁLISE (scores 0–100 + grade +
+        reasons/warnings). MODO COMPLEMENTAR — não toca no opportunities().
+
+        Monta as features a partir do que já temos (TeamForm) e roda a
+        MarketRecommendationEngine. Dado ausente vira score neutro 50 + warning,
+        então o grade fica baixo onde não há informação (honesto)."""
+        from src.analysis.features import MatchFeatures
+        from src.analysis.markets import MarketRecommendationEngine
+        from src.providers.base import TeamForm
+
+        ck = f"analysisfeed:pre:{context}:{int(include_avoid)}"
+        cached = self._odds_cache.get(ck)
+        if cached is not None:
+            return cached[:limit]
+
+        engine = MarketRecommendationEngine()
+        out = []
+        for m in self._upcoming_matches(context, only_future=True):
+            hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
+            af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+            mf = MatchFeatures.from_domain(m, hf, af)
+            recs = engine.recommend_pre_game(
+                mf, match_id=m.id, home_name=m.home_team.name,
+                away_name=m.away_team.name, include_avoid=include_avoid)
+            out.extend(self._analysis_out(m, r, context) for r in recs[:3])
+        out.sort(key=lambda r: r.confidence, reverse=True)
+        self._odds_cache.set(ck, out, config.LIVE_FEED_TTL * 8)  # pré-jogo muda pouco
+        return out[:limit]
+
+    def _analysis_out(self, m: Match, r, context: str):
+        """AnalysisRecommendation (engine) → AnalysisRecommendationOut (contrato)."""
+        from src.schemas.football_schemas import AnalysisRecommendationOut
+        return AnalysisRecommendationOut(
+            match_id=m.id, match=r.match or f"{m.home_team.name} x {m.away_team.name}",
+            league=m.league_name or None, market=r.market, selection=r.selection,
+            line=r.line, odd=r.odd, confidence=r.confidence, edge_score=r.edge_score,
+            risk_score=r.risk_score, recommendation_type=r.recommendation_type,
+            grade=r.grade, reasons=r.reasons, warnings=r.warnings,
+            raw_scores=r.raw_scores, team=r.team, context=context,
+            stage=m.stage, group=m.group,
+            kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
+        )
+
     @staticmethod
     def _prob_confidence(prob: float, edge=None) -> str:
         """Confiança pela PROBABILIDADE (produto confiança-first): quanto mais

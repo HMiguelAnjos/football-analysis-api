@@ -308,6 +308,36 @@ class RecommendationOut(BaseModel):
     tag: Optional[str] = None
 
 
+# ─── Recomendações da ENGINE DE ANÁLISE (scores) ─────────────────────────
+class AnalysisRecommendationOut(BaseModel):
+    """Recomendação com scores explicáveis (FootballAnalysisEngine).
+
+    edge_score/risk_score/confidence são 0–100; grade A+/A/B/C/AVOID; raw_scores
+    traz os 11 scores do jogo (None quando não se aplica, ex.: liveGameState no
+    pré-jogo)."""
+    id: int = 0
+    match_id: Optional[int] = None
+    match: Optional[str] = None
+    league: Optional[str] = None
+    market: str
+    selection: str
+    line: Optional[float] = None
+    odd: Optional[float] = None
+    confidence: float                      # 0-100
+    edge_score: float                      # 0-100
+    risk_score: float                      # 0-100
+    recommendation_type: str               # PRE_GAME | LIVE
+    grade: str                             # A+ | A | B | C | AVOID
+    reasons: list[str] = []
+    warnings: list[str] = []
+    raw_scores: dict[str, Optional[float]] = {}
+    team: Optional[str] = None
+    context: str = "general"
+    stage: Optional[str] = None
+    group: Optional[str] = None
+    kickoff: Optional[str] = None
+
+
 # ─── Recomendações AO VIVO (in-play, foco escanteios) ────────────────────
 class LiveRecoOut(BaseModel):
     id: int

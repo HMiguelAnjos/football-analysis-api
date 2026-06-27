@@ -33,6 +33,7 @@ from src.schemas.auth_schemas import (
 )
 from src import competition
 from src.schemas.football_schemas import (
+    AnalysisRecommendationOut,
     BracketStageSchema,
     ContextSchema,
     GenerateRequest,
@@ -539,6 +540,17 @@ def recommendations_opportunities(limit: int = Query(30, ge=1, le=100)):
         return []
 
 
+@app.get("/football/analysis", response_model=list[AnalysisRecommendationOut])
+def analysis_recommendations(limit: int = Query(30, ge=1, le=100),
+                             include_avoid: bool = Query(False)):
+    """Engine de ANÁLISE (scores + grade) PRÉ-JOGO. Complementa o feed de valor."""
+    try:
+        return data_service.analysis_opportunities(limit=limit, include_avoid=include_avoid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("analysis falhou: %s", exc)
+        return []
+
+
 @app.get("/football/live-opportunities", response_model=list[RecommendationOut])
 def live_opportunities(limit: int = Query(30, ge=1, le=100)):
     """Picks de valor AO VIVO (modelo in-play × odd ao vivo)."""
@@ -904,6 +916,18 @@ def wc_opportunities(limit: int = Query(30, ge=1, le=100)):
         return data_service.opportunities(context=_WC, limit=limit)
     except Exception as exc:  # noqa: BLE001
         logger.warning("wc opportunities falhou: %s", exc)
+        return []
+
+
+@wc.get("/analysis", response_model=list[AnalysisRecommendationOut])
+def wc_analysis(limit: int = Query(30, ge=1, le=100),
+                include_avoid: bool = Query(False)):
+    """Engine de ANÁLISE (scores + grade) PRÉ-JOGO da Copa."""
+    try:
+        return data_service.analysis_opportunities(context=_WC, limit=limit,
+                                                   include_avoid=include_avoid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wc analysis falhou: %s", exc)
         return []
 
 
