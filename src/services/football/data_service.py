@@ -510,6 +510,9 @@ class FootballDataService:
         # Gol cedo: prob de sair gol no 1º tempo (~45% dos gols esperados saem no 1T).
         p_1h = 1.0 - math.exp(-0.45 * (lam_h + lam_a))
         add("first_half_goal", "yes", p_1h)
+        # Gol RÁPIDO: prob de sair gol até os 30 min (1/3 do jogo).
+        p_30 = 1.0 - math.exp(-(lam_h + lam_a) / 3.0)
+        add("first_30_goal", "yes", p_30)
 
         # Calibração do edge: de-vig + blend modelo×mercado por grupo de mercado;
         # edge irreal (> MAX_EDGE = erro do modelo) vira None (mostra "—").
@@ -574,6 +577,8 @@ class FootballDataService:
             return {"home": f"{home} marca 2+", "away": f"{away} marca 2+"}.get(selection, selection)
         if market == "first_half_goal":
             return "Gol no 1º tempo"
+        if market == "first_30_goal":
+            return "Gol até 30 min"
         return selection
 
     def opportunities(self, *, context: str = "general", limit: int = 30,
@@ -593,7 +598,8 @@ class FootballDataService:
         # "Coisas que podem acontecer": dupla chance (favorito não perde),
         # team_total (discrepância → favorito marca 2+) e gol no 1º tempo (gol
         # cedo), além de 1x2/over-under/BTTS.
-        focus = {"1x2", "over_under", "btts", "double_chance", "team_total", "first_half_goal"}
+        focus = {"1x2", "over_under", "btts", "double_chance", "team_total",
+                 "first_half_goal", "first_30_goal"}
 
         matches = self._upcoming_matches(context, only_future=True)
         out = []
@@ -604,6 +610,9 @@ class FootballDataService:
             hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
             af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
             sample = min(hf.matches_played, af.matches_played)
+            # Discrepância: favorito do 1x2 muito provável (>=58%) → confronto desigual.
+            w1x2 = {r.selection: (r.model_prob or 0) for r in rows if r.market == "1x2"}
+            tag = "Discrepância alta" if max(w1x2.get("home", 0), w1x2.get("away", 0)) >= 0.58 else None
             match_picks = []
             for r in rows:
                 if r.market not in focus:
@@ -621,7 +630,7 @@ class FootballDataService:
                     continue
                 if r.odd is not None and not (min_odd <= r.odd <= max_odd):
                     continue
-                match_picks.append(self._prob_out(m, r, prob, sample, context))
+                match_picks.append(self._prob_out(m, r, prob, sample, context, tag=tag))
             # Até 3 entradas por jogo (variedade entre partidas, sem flood).
             match_picks.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
             out.extend(match_picks[:3])
@@ -644,7 +653,7 @@ class FootballDataService:
         return label
 
     def _prob_out(self, m: Match, r, prob: float, sample: int,
-                  context: str) -> RecommendationOut:
+                  context: str, tag: str | None = None) -> RecommendationOut:
         """Linha de mercado → recomendação por PROBABILIDADE (odds opcionais).
         Odd/edge entram só como informação extra quando existem."""
         edge = r.edge
@@ -669,7 +678,7 @@ class FootballDataService:
             status="pending", reason=reason,
             bookmaker=None, created_at="", stage=m.stage, group=m.group,
             kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
-            context=context,
+            context=context, tag=tag,
         )
 
     def live_opportunities(self, *, context: str = "general", limit: int = 30,

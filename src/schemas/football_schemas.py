@@ -304,6 +304,8 @@ class RecommendationOut(BaseModel):
     # Props de jogador: time do jogador + número da camisa (descrição melhor).
     team: Optional[str] = None
     player_number: Optional[int] = None
+    # Selo de destaque (ex.: "Discrepância alta") quando o confronto é desigual.
+    tag: Optional[str] = None
 
 
 # ─── Recomendações AO VIVO (in-play, foco escanteios) ────────────────────
