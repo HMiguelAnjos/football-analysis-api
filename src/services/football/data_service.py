@@ -701,7 +701,10 @@ class FootballDataService:
 
         from src.analysis.features import TeamAdvancedStats, aggregate_advanced
 
-        key = f"{_CACHE_V}:teamadv:{context}:{team_id}:{config.CURRENT_SEASON}"
+        # int(USE_FIXTURES) na chave: evita cache de modo offline (fixtures, sem
+        # stats) vazar pro modo real e vice-versa.
+        key = (f"{_CACHE_V}:teamadv:{int(config.USE_FIXTURES)}:{context}:"
+               f"{team_id}:{config.CURRENT_SEASON}")
         cached = self._disk.get(key)
         if cached is not None:
             return TeamAdvancedStats(**cached) if cached else None
@@ -746,12 +749,14 @@ class FootballDataService:
             return d.get(key) if isinstance(d, dict) else None
 
         def _cards(d):
+            # /fixtures/statistics raramente traz amarelos (só vermelhos) → contar
+            # só vermelho subestima. Sem amarelo, deixa None (fallback).
             if not isinstance(d, dict):
                 return None
-            y, r = d.get("yellow_cards"), d.get("red_cards")
-            if y is None and r is None:
+            y = d.get("yellow_cards")
+            if y is None:
                 return None
-            return (y or 0) + (r or 0)
+            return y + (d.get("red_cards") or 0)
 
         eng = LiveRecommendationEngine()
         out = []
