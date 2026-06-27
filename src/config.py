@@ -151,6 +151,9 @@ MIN_PICK_PROB: float = float(os.getenv("MIN_PICK_PROB", "0.60"))
 # Prob mínima pro "jogador pode marcar" AO VIVO. Gol é evento raro — mesmo o
 # melhor atacante fica < 60% num jogo, então o piso aqui é menor.
 LIVE_GOAL_MIN_PROB: float = float(os.getenv("LIVE_GOAL_MIN_PROB", "0.33"))
+# Cache curto (memória) dos feeds AO VIVO. Troca de aba / auto-refresh
+# reaproveita o cálculo recente em vez de re-bater no provider toda vez.
+LIVE_FEED_TTL: int = int(os.getenv("LIVE_FEED_TTL", "15"))
 
 # ---------------------------------------------------------------------------
 # Ratings de força de seleção (priors do modelo em torneios)

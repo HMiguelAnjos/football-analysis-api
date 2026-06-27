@@ -699,6 +699,11 @@ class FootballDataService:
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
 
+        ck = f"livefeed:opps:{context}:{min_odd}:{max_odd}"
+        cached = self._odds_cache.get(ck)
+        if cached is not None:
+            return cached[:limit]
+
         out: list[RecommendationOut] = []
         for m in self.live_matches(context):
             if m.home_goals is None or m.away_goals is None:
@@ -743,6 +748,7 @@ class FootballDataService:
                 out.append(self._live_out(m, mk, sel, line, model_p, odd, edge,
                                           sample, context, red_h, red_a, mom_h, mom_a))
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
+        self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
         return out[:limit]
 
     def _live_stats(self, m: Match, context: str):
@@ -770,6 +776,21 @@ class FootballDataService:
             return (1.0, 1.0)
         return momentum_multipliers(st.home, st.away)
 
+    def _live_player_shots(self, match_id: int, context: str) -> list[dict]:
+        """get_live_player_shots cacheado curto (memória), COMPARTILHADO entre os
+        feeds de chutes e gols ao vivo — evita dobrar as chamadas ao provider
+        quando o usuário alterna entre as abas."""
+        getter = getattr(self._football(context), "get_live_player_shots", None)
+        if getter is None:
+            return []
+        key = f"liveplayershots:{context}:{match_id}"
+        cached = self._odds_cache.get(key)
+        if cached is not None:
+            return cached
+        data = getter(match_id) or []
+        self._odds_cache.set(key, data, config.LIVE_FEED_TTL)
+        return data
+
     def live_shots(self, *, context: str = "general", limit: int = 40):
         """ESPECIALISTA EM CHUTES A GOL ao vivo: pra cada jogador em campo,
         projeta os chutes no gol que ainda vêm (taxa de temporada + ritmo no
@@ -777,13 +798,18 @@ class FootballDataService:
         ele bater a próxima linha. Ordena pelos mais prováveis."""
         from src.probability import live_shots_remaining, prob_at_least, remaining_fraction
 
+        ck = f"livefeed:shots:{context}"
+        cached = self._odds_cache.get(ck)
+        if cached is not None:
+            return cached[:limit]
+
         out: list[RecommendationOut] = []
         for m in self.live_matches(context):
             getter = getattr(self._football(context), "get_live_player_shots", None)
             if getter is None:
                 break
             try:
-                live_players = getter(m.id) or []
+                live_players = self._live_player_shots(m.id, context)
             except Exception:  # noqa: BLE001
                 continue
             if not live_players:
@@ -820,6 +846,7 @@ class FootballDataService:
                     continue
                 out.append(self._shot_out(m, lp, line, prob, already, rem, mom, context))
         out.sort(key=lambda r: r.model_prob or 0, reverse=True)
+        self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
         return out[:limit]
 
     def _shot_out(self, m: Match, lp: dict, line: float, prob: float,
@@ -855,13 +882,18 @@ class FootballDataService:
         from src.probability import remaining_fraction
         from src.recommendation.player_props import MATCH_PEN_GOALS
 
+        ck = f"livefeed:goals:{context}"
+        cached = self._odds_cache.get(ck)
+        if cached is not None:
+            return cached[:limit]
+
         out: list[RecommendationOut] = []
         for m in self.live_matches(context):
             getter = getattr(self._football(context), "get_live_player_shots", None)
             if getter is None:
                 break
             try:
-                live_players = getter(m.id) or []
+                live_players = self._live_player_shots(m.id, context)
             except Exception:  # noqa: BLE001
                 continue
             if not live_players:
@@ -903,6 +935,7 @@ class FootballDataService:
                 out.append(self._goal_out(m, lp, prob, mom, context,
                                           is_taker=lp["player_id"] == taker_by_team.get(lp["team_id"])))
         out.sort(key=lambda r: r.model_prob or 0, reverse=True)
+        self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
         return out[:limit]
 
     def _goal_out(self, m: Match, lp: dict, prob: float, mom: float,
