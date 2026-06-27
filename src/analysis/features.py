@@ -37,6 +37,61 @@ def _streak(recent_form: Optional[str]) -> Optional[float]:
 
 
 @dataclass
+class TeamAdvancedStats:
+    """Médias por jogo agregadas das estatísticas de partida (api-football
+    /fixtures/statistics) dos últimos N jogos. None onde a fonte não fornece."""
+    xg: Optional[float] = None
+    xga: Optional[float] = None
+    shots_on_for: Optional[float] = None
+    shots_on_against: Optional[float] = None
+    shots_total_for: Optional[float] = None
+    corners_for: Optional[float] = None
+    corners_against: Optional[float] = None
+    cards_for: Optional[float] = None
+    fouls_for: Optional[float] = None
+    possession: Optional[float] = None
+    sample: int = 0
+
+
+def aggregate_advanced(samples: list[dict]) -> TeamAdvancedStats:
+    """Agrega amostras [{'own': stats_dict, 'opp': stats_dict}, ...] em médias.
+    Cada chave é média só sobre os jogos em que ela existe (ignora ausentes)."""
+    if not samples:
+        return TeamAdvancedStats()
+
+    def avg(getter) -> Optional[float]:
+        vals = [v for v in (getter(s) for s in samples) if v is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    def own(key):
+        return lambda s: s.get("own", {}).get(key)
+
+    def opp(key):
+        return lambda s: s.get("opp", {}).get(key)
+
+    def cards(s) -> Optional[float]:
+        d = s.get("own", {})
+        y, r = d.get("yellow_cards"), d.get("red_cards")
+        if y is None and r is None:
+            return None
+        return (y or 0) + (r or 0)
+
+    return TeamAdvancedStats(
+        xg=avg(own("expected_goals")),
+        xga=avg(opp("expected_goals")),
+        shots_on_for=avg(own("shots_on_goal")),
+        shots_on_against=avg(opp("shots_on_goal")),
+        shots_total_for=avg(own("total_shots")),
+        corners_for=avg(own("corner_kicks")),
+        corners_against=avg(opp("corner_kicks")),
+        cards_for=avg(cards),
+        fouls_for=avg(own("fouls")),
+        possession=avg(own("ball_possession")),
+        sample=len(samples),
+    )
+
+
+@dataclass
 class TeamFeatures:
     """Métricas de UM time, todas opcionais (None = dado ausente)."""
     # Ofensivo
@@ -126,6 +181,34 @@ class TeamFeatures:
             matches_played=form.matches_played or 0,
         )
 
+    def merge_advanced(self, adv: Optional["TeamAdvancedStats"]) -> "TeamFeatures":
+        """Sobrepõe as métricas agregadas das stats por jogo (xG, finalizações,
+        escanteios, cartões, posse) — preenche o que o TeamForm deixou em None.
+        Só aplica valores presentes; mantém o resto. Retorna self (encadeável)."""
+        if adv is None:
+            return self
+        if adv.xg is not None:
+            self.xg = adv.xg
+        if adv.xga is not None:
+            self.xga = adv.xga
+        if adv.shots_on_for is not None:
+            self.shots_on_target = adv.shots_on_for
+        if adv.shots_on_against is not None:
+            self.shots_on_target_conceded = adv.shots_on_against
+        if adv.xg is not None and adv.shots_total_for:
+            self.xg_per_shot = adv.xg / adv.shots_total_for
+        if adv.corners_for is not None:
+            self.corners_for = adv.corners_for
+        if adv.corners_against is not None:
+            self.corners_against = adv.corners_against
+        if adv.cards_for is not None:
+            self.cards_for = adv.cards_for
+        if adv.fouls_for is not None:
+            self.fouls = adv.fouls_for
+        if adv.possession is not None:
+            self.off_possession = adv.possession
+        return self
+
 
 @dataclass
 class MatchFeatures:
@@ -141,11 +224,13 @@ class MatchFeatures:
 
     @classmethod
     def from_domain(cls, match: Optional[Match], home_form: Optional[TeamForm],
-                    away_form: Optional[TeamForm], *, odds: Optional[dict] = None) -> "MatchFeatures":
+                    away_form: Optional[TeamForm], *, odds: Optional[dict] = None,
+                    home_adv: Optional["TeamAdvancedStats"] = None,
+                    away_adv: Optional["TeamAdvancedStats"] = None) -> "MatchFeatures":
         knockout = bool(match and match.stage and match.stage != "group")
         return cls(
-            home=TeamFeatures.from_form(home_form),
-            away=TeamFeatures.from_form(away_form),
+            home=TeamFeatures.from_form(home_form).merge_advanced(home_adv),
+            away=TeamFeatures.from_form(away_form).merge_advanced(away_adv),
             knockout=knockout,
             neutral_venue=knockout,                  # torneio em sede única
             importance=80.0 if knockout else None,

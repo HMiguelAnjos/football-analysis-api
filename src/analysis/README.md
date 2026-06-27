@@ -59,9 +59,22 @@ chegam, sem mexer em código.
 3. Pronto — o score passa a usar o dado real; **peso e fórmula não mudam**.
 
 ## Dados hoje vs. ausentes
-- **Temos:** gols, xG/xGA (só com understat), forma, finalizações no alvo, posse,
-  escanteios/cartões (às vezes); ao vivo: chutes, chutes no alvo, finalizações na
-  área, bloqueios, escanteios, posse, xG ao vivo, faltas.
-- **Ausentes (fallback-50 + warning):** xA por time, passes-chave/progressivos,
-  grandes chances, toques na área, PPDA, recuperações altas, erros defensivos,
-  ataques perigosos ao vivo, perfil de árbitro, odds live.
+
+### Agregação de stats por jogo (ligas de CLUBE)
+Para o contexto `general` (Premier, Brasileirão, Bundesliga, etc.), o serviço
+agrega as estatísticas dos últimos `STATS_AGG_LAST_N` jogos via api-football
+`/fixtures/statistics` (`data_service._team_advanced_stats`) e preenche as
+features com **dado real**: xG, xGA, finalizações no alvo (feitas/cedidas),
+escanteios (a favor/contra), cartões, faltas, posse — e deriva xG por finalização.
+Liga/desliga com `ENABLE_STATS_AGGREGATION`. Cache: stats de jogo finalizado são
+imutáveis → cache longo e compartilhado entre os dois times; agregado por time
+~6h. Degrada gracioso: sem a stat, mantém o fallback-50.
+
+**A Copa do Mundo (`world_cup`) NÃO usa essa agregação** — api-football não cobre
+seleções de forma confiável. Lá os scores seguem com gols + forma (resto 50).
+
+### Ainda sem fonte (fallback-50 + warning, em qualquer contexto)
+xA por time, passes-chave/progressivos/último terço, grandes chances, toques na
+área, PPDA, recuperações altas, erros defensivos, cruzamentos precisos, ataques
+perigosos ao vivo, perfil de árbitro, odds live. (Exigiriam Opta/StatsBomb;
+understat só cobre clubes europeus e está como stub.)

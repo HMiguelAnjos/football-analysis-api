@@ -654,12 +654,18 @@ class FootballDataService:
         if cached is not None:
             return cached[:limit]
 
+        # Stats avançadas (xG/finalizações/escanteios...) só pras LIGAS DE CLUBE.
+        # A Copa fica sem (api-football não cobre seleções de forma confiável).
+        use_adv = context != "world_cup" and config.ENABLE_STATS_AGGREGATION
+
         engine = MarketRecommendationEngine()
         out = []
         for m in self._upcoming_matches(context, only_future=True):
             hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
             af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
-            mf = MatchFeatures.from_domain(m, hf, af)
+            h_adv = self._team_advanced_stats(m.home_team.id, context) if use_adv else None
+            a_adv = self._team_advanced_stats(m.away_team.id, context) if use_adv else None
+            mf = MatchFeatures.from_domain(m, hf, af, home_adv=h_adv, away_adv=a_adv)
             recs = engine.recommend_pre_game(
                 mf, match_id=m.id, home_name=m.home_team.name,
                 away_name=m.away_team.name, include_avoid=include_avoid)
@@ -667,6 +673,60 @@ class FootballDataService:
         out.sort(key=lambda r: r.confidence, reverse=True)
         self._odds_cache.set(ck, out, config.LIVE_FEED_TTL * 8)  # pré-jogo muda pouco
         return out[:limit]
+
+    def _match_stats_cached(self, match_id: int, context: str) -> dict:
+        """Estatísticas de UM jogo finalizado (imutáveis) → cache em DISCO bem
+        longo, COMPARTILHADO entre os dois times. {} quando a fonte não fornece."""
+        key = f"matchstats:{context}:{match_id}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return cached
+        getter = getattr(self._football(context), "get_match_statistics", None)
+        data: dict = {}
+        if getter is not None:
+            try:
+                st = getter(match_id)
+                if st is not None:
+                    data = {"home": st.home or {}, "away": st.away or {}}
+            except Exception:  # noqa: BLE001
+                data = {}
+        self._disk.set(key, data, config.STATS_MATCH_TTL)
+        return data
+
+    def _team_advanced_stats(self, team_id: int, context: str):
+        """Médias por jogo (xG, finalizações no alvo, escanteios, cartões, posse)
+        dos últimos N jogos do time. Cacheado em disco. None se sem dado —
+        a engine então mantém o fallback neutro 50."""
+        import dataclasses
+
+        from src.analysis.features import TeamAdvancedStats, aggregate_advanced
+
+        key = f"{_CACHE_V}:teamadv:{context}:{team_id}:{config.CURRENT_SEASON}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return TeamAdvancedStats(**cached) if cached else None
+
+        getter = getattr(self._football(context), "get_recent_results", None)
+        samples: list[dict] = []
+        if getter is not None:
+            try:
+                matches = getter(team_id, config.STATS_AGG_LAST_N) or []
+            except Exception:  # noqa: BLE001
+                matches = []
+            for mm in matches:
+                stats = self._match_stats_cached(mm.id, context)
+                if not stats:
+                    continue
+                is_home = mm.home_team.id == team_id
+                own = stats.get("home" if is_home else "away") or {}
+                opp = stats.get("away" if is_home else "home") or {}
+                if own or opp:
+                    samples.append({"own": own, "opp": opp})
+
+        adv = aggregate_advanced(samples)
+        self._disk.set(key, dataclasses.asdict(adv) if adv.sample else {},
+                       config.STATS_AGG_TTL)
+        return adv if adv.sample else None
 
     def live_analysis(self, *, context: str = "general", limit: int = 30,
                       include_avoid: bool = False):
