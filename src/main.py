@@ -559,6 +559,16 @@ def live_shots(limit: int = Query(40, ge=1, le=100)):
         return []
 
 
+@app.get("/football/live-goals", response_model=list[RecommendationOut])
+def live_goals(limit: int = Query(40, ge=1, le=100)):
+    """GOLS ao vivo: jogador que ainda pode marcar (taxa + pressão + pênalti)."""
+    try:
+        return data_service.live_goals(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("live goals falhou: %s", exc)
+        return []
+
+
 # ── Recomendações AO VIVO persistidas (foco escanteios) ─────────────────────
 @app.get("/football/live-recommendations/match/{match_id}", response_model=list[LiveRecoOut])
 def live_recs_by_match(match_id: int, db: Session = Depends(get_db)):
@@ -803,6 +813,16 @@ def wc_live_shots(limit: int = Query(40, ge=1, le=100)):
         return data_service.live_shots(context=_WC, limit=limit)
     except Exception as exc:  # noqa: BLE001
         logger.warning("wc live shots falhou: %s", exc)
+        return []
+
+
+@wc.get("/live-goals", response_model=list[RecommendationOut])
+def wc_live_goals(limit: int = Query(40, ge=1, le=100)):
+    """GOLS ao vivo da Copa: jogador que ainda pode marcar."""
+    try:
+        return data_service.live_goals(context=_WC, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wc live goals falhou: %s", exc)
         return []
 
 

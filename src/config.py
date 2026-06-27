@@ -148,6 +148,9 @@ MODEL_MARKET_BLEND: float = float(os.getenv("MODEL_MARKET_BLEND", "0.40"))
 # (ex.: não recomenda "Senegal vencer" a 20% só porque a odd está alta). 0.55 =
 # o modelo precisa realmente favorecer a seleção. Calibrável por env.
 MIN_PICK_PROB: float = float(os.getenv("MIN_PICK_PROB", "0.60"))
+# Prob mínima pro "jogador pode marcar" AO VIVO. Gol é evento raro — mesmo o
+# melhor atacante fica < 60% num jogo, então o piso aqui é menor.
+LIVE_GOAL_MIN_PROB: float = float(os.getenv("LIVE_GOAL_MIN_PROB", "0.33"))
 
 # ---------------------------------------------------------------------------
 # Ratings de força de seleção (priors do modelo em torneios)

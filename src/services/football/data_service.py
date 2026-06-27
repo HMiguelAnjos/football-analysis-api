@@ -846,6 +846,94 @@ class FootballDataService:
             context=context, team=team_name, player_number=None,
         )
 
+    def live_goals(self, *, context: str = "general", limit: int = 40):
+        """GOLS AO VIVO: jogador que pode (ainda) marcar — taxa de gol da
+        temporada × tempo restante × pressão do time, + batedor de pênalti.
+        Pula quem já marcou (bet de artilheiro já ganha)."""
+        import math
+
+        from src.probability import remaining_fraction
+        from src.recommendation.player_props import MATCH_PEN_GOALS
+
+        out: list[RecommendationOut] = []
+        for m in self.live_matches(context):
+            getter = getattr(self._football(context), "get_live_player_shots", None)
+            if getter is None:
+                break
+            try:
+                live_players = getter(m.id) or []
+            except Exception:  # noqa: BLE001
+                continue
+            if not live_players:
+                continue
+
+            pool = (self.team_player_pool(m.home_team.id, context)
+                    + self.team_player_pool(m.away_team.id, context))
+            # Gol de bola rolando por jogo + batedor de pênalti por time.
+            rate_by_id = {
+                int(p.id): (max((p.goals or 0) - (p.penalty_scored or 0), 0) / p.appearances
+                            if p.appearances else 0.0)
+                for p in pool
+            }
+            taker_by_team: dict[int, int] = {}
+            best_pen: dict[int, int] = {}
+            for p in pool:
+                tid = int(p.team_id or 0)
+                pen = p.penalty_scored or 0
+                if pen >= 1 and pen > best_pen.get(tid, 0):
+                    best_pen[tid] = pen
+                    taker_by_team[tid] = int(p.id)
+            mom_h, mom_a = self._momentum(m, context)
+            minute = m.minute or 0
+            frac = remaining_fraction(minute)
+
+            for lp in live_players:
+                if lp.get("minutes", 0) <= 0 or lp.get("goals", 0) >= 1:
+                    continue                          # fora / já marcou (já ganhou)
+                rate = rate_by_id.get(lp["player_id"], 0.0)
+                mom = mom_h if lp["team_id"] == m.home_team.id else mom_a
+                rem_lambda = rate * frac * mom
+                if lp["player_id"] == taker_by_team.get(lp["team_id"]):
+                    rem_lambda += MATCH_PEN_GOALS * frac    # pênalti só pro batedor
+                if rem_lambda <= 0.02:
+                    continue
+                prob = 1.0 - math.exp(-rem_lambda)
+                if prob < config.LIVE_GOAL_MIN_PROB:
+                    continue
+                out.append(self._goal_out(m, lp, prob, mom, context,
+                                          is_taker=lp["player_id"] == taker_by_team.get(lp["team_id"])))
+        out.sort(key=lambda r: r.model_prob or 0, reverse=True)
+        return out[:limit]
+
+    def _goal_out(self, m: Match, lp: dict, prob: float, mom: float,
+                  context: str, is_taker: bool = False) -> RecommendationOut:
+        """Recomendação de 'jogador pode marcar' ao vivo → RecommendationOut."""
+        name = lp.get("name", "Jogador")
+        team_name = m.home_team.name if lp["team_id"] == m.home_team.id else m.away_team.name
+        minute = m.minute if m.minute is not None else 0
+        # Gol é raro: escala de confiança própria (50%+ = forte; 38%+ = média).
+        conf = "high" if prob >= 0.50 else "medium" if prob >= 0.38 else "low"
+        notes = []
+        if mom >= 1.08:
+            notes.append("time pressionando")
+        if is_taker:
+            notes.append("cobra os pênaltis")
+        note_txt = (" · " + ", ".join(notes)) if notes else ""
+        return RecommendationOut(
+            id=0, match=f"{m.home_team.name} x {m.away_team.name}",
+            match_id=m.id, league=m.league_name or None, market="anytime_scorer",
+            selection=f"{name} — Marcar a qualquer momento",
+            line=None, odd=None, fair_odd=round(1 / prob, 2) if prob > 0 else None,
+            model_prob=round(prob, 4), implied_prob=None, edge=None, confidence=conf,
+            status="live", reason=(
+                f"AO VIVO {minute}' · {name}{note_txt}. "
+                f"{prob*100:.0f}% de marcar no tempo que resta."
+            ),
+            bookmaker=None, created_at="", stage=m.stage, group=m.group,
+            kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,
+            context=context, team=team_name, player_number=None,
+        )
+
     def _red_cards(self, m: Match, context: str) -> tuple[int, int]:
         """Expulsões (mandante, visitante) do jogo ao vivo. Cacheado curto pra
         não re-bater a cada refresh (mudam raramente)."""
