@@ -139,3 +139,13 @@ RISK_HARD_CAP = 70.0
 
 # Confiança = edge ajustado pelo risco (0–100).
 CONFIDENCE_RISK_PENALTY = 0.45        # quanto o risco corrói a confiança
+
+# ─── Linhas-padrão por mercado (quando não há projeção do dado) ──────────────
+# Calibráveis. Usadas como fallback; quando há média (escanteios/cartões/chutes)
+# a engine projeta a linha a partir dos dados.
+DEFAULT_LINES = {
+    "over_goals": 2.5,
+    "corners": 9.5,
+    "cards": 4.5,
+    "shots_on_target": 4.5,
+}
