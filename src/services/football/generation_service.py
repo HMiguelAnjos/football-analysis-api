@@ -10,16 +10,36 @@ Jogos sem odds ou sem forma são pulados (logados), nunca derrubam o lote.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from src import config
 from src.providers.base import Match
 from src.recommendation.engine import RecommendationCandidate, generate_recommendations
 from src.services import recommendation_service as rec_svc
 from src.services.football.data_service import FootballDataService
 
 logger = logging.getLogger(__name__)
+
+# Mercados que o settlement resolve a partir do placar final (settlement.py) e
+# cujo CÓDIGO de seleção (home/draw/away, over/under, yes/no, home_draw/...) o
+# match_markets já produz. Base da geração confidence-first SEM odds.
+_SETTLEABLE_MARKETS = {"1x2", "double_chance", "over_under", "btts"}
+
+
+@dataclass
+class _ModelPick:
+    """Pick do modelo SEM odds (confidence-first) — formato que rec_svc.upsert_prop
+    aceita (mesmos atributos de um PropPick)."""
+    market: str
+    selection: str
+    line: Optional[float]
+    fair_odd: float
+    model_probability: float
+    confidence_score: float
+    recommendation_reason: str
 
 
 class GenerationService:
@@ -73,6 +93,7 @@ class GenerationService:
         all_candidates: list[RecommendationCandidate] = []
         persisted = 0
         prop_count = 0
+        market_model = 0          # picks de mercado confidence-first (sem odds)
         # Jogadores da competição (cacheado) → agrupados por time pras props.
         players_by_team = self._players_by_team(context)
         for match in matches:
@@ -96,6 +117,27 @@ class GenerationService:
                         db.rollback()
                         logger.warning("generation: upsert falhou (%s)", exc)
 
+            # SEM odds (ODDS_PROVIDER=none) o engine de valor não emite nada.
+            # Fallback CONFIDENCE-FIRST: persiste os mercados prováveis do modelo
+            # (códigos settláveis) pra fechar o loop de validação.
+            if not candidates:
+                cf = self._confidence_first_for_match(match, context)
+                if persist:
+                    for pick in cf:
+                        try:
+                            _, created = rec_svc.upsert_prop(
+                                db, pick, match=match, context=context,
+                                kickoff_at=match.utc_kickoff,
+                            )
+                            if created:
+                                persisted += 1
+                                market_model += 1
+                        except Exception as exc:  # noqa: BLE001
+                            db.rollback()
+                            logger.warning("generation: market upsert falhou (%s)", exc)
+                else:
+                    market_model += len(cf)
+
             # Player props (projeção do modelo, independem de odds).
             if players_by_team:
                 prop_count += self._generate_props(
@@ -103,12 +145,48 @@ class GenerationService:
                 )
 
         return {
-            "generated": len(all_candidates) + prop_count,
+            "generated": len(all_candidates) + market_model + prop_count,
             "persisted": persisted + prop_count,
             "matches_analyzed": len(matches),
+            "market_model": market_model,
             "player_props": prop_count,
             "candidates": all_candidates,
         }
+
+    def _confidence_first_for_match(self, match: Match, context: str,
+                                    per_match: int = 3) -> list[_ModelPick]:
+        """Picks de MERCADO prováveis do modelo (sem odds), em CÓDIGO settlável.
+        Reusa match_markets (mesmos λ calibrados do feed que o usuário vê)."""
+        try:
+            rows = self._data.match_markets(match.id, context=context)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("generation: match_markets falhou no jogo %s (%s)", match.id, exc)
+            return []
+        picks: list = []
+        for r in rows:
+            if r.market not in _SETTLEABLE_MARKETS:
+                continue
+            if r.market == "over_under" and r.line != 2.5:
+                continue            # só a linha principal de gols
+            if r.market == "double_chance" and r.selection == "home_away":
+                continue            # "casa ou fora" é pouco intuitivo
+            if (r.model_prob or 0) < config.MIN_PICK_PROB:
+                continue
+            picks.append(r)
+        picks.sort(key=lambda r: r.model_prob or 0, reverse=True)
+        out: list[_ModelPick] = []
+        for r in picks[:per_match]:
+            p = r.model_prob or 0.0
+            out.append(_ModelPick(
+                market=r.market, selection=r.selection, line=r.line,
+                fair_odd=r.fair_odd or (round(1 / p, 2) if p else 0.0),
+                model_probability=p,
+                confidence_score=round(min(p, 0.97) * 100, 1),
+                recommendation_reason=(
+                    f"Modelo estima {p * 100:.0f}% para {r.selection} ({r.market})."
+                ),
+            ))
+        return out
 
     def _players_by_team(self, context: str) -> dict[int, list]:
         try:

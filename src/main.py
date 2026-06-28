@@ -139,6 +139,13 @@ async def lifespan(app: FastAPI):
             await start_live_reco_worker()
         except Exception as exc:  # noqa: BLE001
             logger.warning("live reco worker não subiu (%s)", exc)
+
+    if config.ENABLE_GENERATION_WORKER:
+        try:
+            from src.workers.generation_worker import start_generation_worker
+            await start_generation_worker()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("generation worker não subiu (%s)", exc)
     yield
 
 

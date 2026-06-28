@@ -84,3 +84,33 @@ def test_generation_persists_player_props(db_session):
     recs = rec_svc.list_recommendations(db_session, only_active=True, limit=200)
     prop_markets = {r.market for r in recs}
     assert "player_shots_on_target" in prop_markets or "anytime_scorer" in prop_markets
+
+
+def test_generation_persists_market_codes_without_odds(db_session):
+    # SEM odds (fixtures), o engine de valor não emite nada; o fallback
+    # confidence-first deve PERSISTIR mercados settláveis com CÓDIGO (nunca
+    # rótulo PT) — senão o settlement não casa.
+    gen = GenerationService(FootballDataService())
+    res = gen.generate(db_session, context="general")
+    assert "market_model" in res
+    recs = rec_svc.list_recommendations(db_session, only_active=True, limit=300)
+    market = [r for r in recs if r.market in {"1x2", "double_chance", "over_under", "btts"}]
+    for r in market:
+        if r.market == "1x2":
+            assert r.selection in {"home", "draw", "away"}
+        if r.market == "double_chance":
+            assert r.selection in {"home_draw", "draw_away"}
+        if r.market == "over_under":
+            assert r.selection in {"over", "under"} and r.line == 2.5
+        if r.market == "btts":
+            assert r.selection in {"yes", "no"}
+
+
+def test_confidence_first_picks_are_settleable_codes():
+    svc = FootballDataService()
+    gen = GenerationService(svc)
+    m = svc.match_domain(1001, context="general")  # Liverpool x City (fixtures)
+    for p in gen._confidence_first_for_match(m, "general"):
+        assert p.market in {"1x2", "double_chance", "over_under", "btts"}
+        assert 0.0 <= p.model_probability <= 1.0
+        assert p.confidence_score >= 60.0  # respeita o piso MIN_PICK_PROB

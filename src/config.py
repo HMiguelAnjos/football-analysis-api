@@ -200,6 +200,11 @@ LIVE_ODDS_POLL_SECONDS: int = int(os.getenv("LIVE_ODDS_POLL_SECONDS", "90"))
 # Precisa de Postgres pra persistir.
 ENABLE_LIVE_RECO_WORKER: bool = _flag("ENABLE_LIVE_RECO_WORKER", "0")
 LIVE_RECO_POLL_SECONDS: int = int(os.getenv("LIVE_RECO_POLL_SECONDS", "120"))
+# Worker que GERA e PERSISTE as recomendações pré-jogo (confidence-first, sem
+# odds) periodicamente — sem ele, nada é salvo no banco automaticamente e não
+# há o que liquidar/validar. Precisa de Postgres.
+ENABLE_GENERATION_WORKER: bool = _flag("ENABLE_GENERATION_WORKER", "0")
+GENERATION_INTERVAL_SECONDS: int = int(os.getenv("GENERATION_INTERVAL_SECONDS", "1800"))
 # Janela após o kickoff em que um jogo é considerado "possivelmente ao vivo".
 # Fora dela o worker nem chama a api-football (economia off-hours).
 LIVE_WINDOW_HOURS: float = float(os.getenv("LIVE_WINDOW_HOURS", "3.0"))
