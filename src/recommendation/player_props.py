@@ -17,7 +17,6 @@ PURO: entra PlayerSchema + forma, sai PropPick. Sem rede/banco.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -87,18 +86,33 @@ def _tackle_opp_label(opp_attack_scaler: float) -> str:
     return "ritmo equilibrado"
 
 
+def _best_line(proj: float, floor: float) -> Optional[float]:
+    """A MAIOR meia-linha (0.5, 1.5, 2.5, …) cuja prob de OVER ainda fica ≥ floor.
+    É a linha 'que paga' mais alta que segue provável — em vez de uma linha baixa
+    quase-certa que não paga nada. None se nem o 0.5 passa o piso."""
+    best: Optional[float] = None
+    for k in range(0, 9):
+        line = k + 0.5
+        p = poisson_over_under(proj, line)["over"]
+        if p >= floor:
+            best = line          # ainda provável → tenta subir mais
+        else:
+            break                # prob só cai com linha maior → para
+    return best
+
+
 def _over_pick(player: PlayerSchema, team: str, market: str, per_game: float,
                scaler: float, opp: str) -> Optional[PropPick]:
     proj = per_game * scaler
     if proj < 0.5:
         return None
-    # Linha sintética logo abaixo da projeção (meia-linha, sem push).
-    line = max(0.5, math.floor(proj) - 0.5)
-    if proj - line < 0.4:           # projeção pouco acima da linha → sobe a linha
-        line = max(0.5, line - 1.0)
-    prob = poisson_over_under(proj, line)["over"]
-    if prob < MIN_PROB[market]:
+    # Linha "de verdade": a mais alta que ainda passa o piso de confiança. Pra
+    # quem tem volume (Casemiro 2.5 desarmes) sobe pra over 1.5/2.5; pra quem
+    # tem pouco volume, fica em 0.5 (porque ele realmente não faz mais).
+    line = _best_line(proj, MIN_PROB[market])
+    if line is None:
         return None
+    prob = poisson_over_under(proj, line)["over"]
     label = _MARKET_LABEL[market]
     return PropPick(
         player_name=player.name, team=team, number=getattr(player, "number", None),
@@ -171,16 +185,27 @@ def _team_props(players: list[PlayerSchema], team: str, scaler: float) -> list[P
     return picks
 
 
+# Desarme depende mais do papel/minutos do jogador do que do ataque do rival.
+# Então o ajuste por adversário é SUAVE (comprime o scaler ofensivo p/ perto de
+# 1.0) — assim a projeção fica perto da média real do jogador (Casemiro ~2.5).
+TACKLE_SCALER_STRENGTH = 0.4
+
+
+def _soften_scaler(scaler: float) -> float:
+    soft = 1.0 + (scaler - 1.0) * TACKLE_SCALER_STRENGTH
+    return min(max(soft, 0.8), 1.2)
+
+
 def _tackles_props(players: list[PlayerSchema], team: str,
                    opp_attack_scaler: float) -> list[PropPick]:
-    """Desarmes (DEFENSIVO): top desarmadores do time, projeção escalada pelo
-    ATAQUE do adversário (mais ataque rival → mais desarmes)."""
+    """Desarmes (DEFENSIVO): top desarmadores do time. Projeção perto da média
+    real (ajuste suave pelo ataque do adversário)."""
     opp = _tackle_opp_label(opp_attack_scaler)
+    soft = _soften_scaler(opp_attack_scaler)
     picks: list[PropPick] = []
     for p in sorted(players, key=lambda x: x.tackles or 0, reverse=True)[:TOP_N_PER_TEAM]:
         pick = _over_pick(p, team, "player_tackles",
-                          _per_game(p.tackles or 0, p.appearances),
-                          opp_attack_scaler, opp)
+                          _per_game(p.tackles or 0, p.appearances), soft, opp)
         if pick:
             picks.append(pick)
     return picks
