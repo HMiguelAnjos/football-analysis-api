@@ -1091,17 +1091,20 @@ class FootballDataService:
         tiles = self._live_card_tiles(
             m, "home" if is_home else "away", mom, context=context, conf_label=conf,
             projection=round(already + rem, 1), projection_delta=round(rem, 1))
+        # Mercado de contagem é INTEIRO ("mais de N" = N ou mais); meia-linha
+        # fica só no `line` pro settlement.
+        threshold = int(line + 0.5)
         return RecommendationOut(
             id=0, match=f"{m.home_team.name} x {m.away_team.name}",
             match_id=m.id, league=m.league_name or None,
             market="player_shots_on_target",
-            selection=f"{name} — Mais de {line:g} chutes no gol",
+            selection=f"{name} — Mais de {threshold} chutes no gol",
             line=line, odd=None, fair_odd=round(1 / prob, 2) if prob > 0 else None,
             model_prob=round(prob, 4), implied_prob=None, edge=None,
             confidence=conf,
             status="live", reason=(
                 f"AO VIVO {minute}' · {name} já tem {already} chute(s) no gol "
-                f"(projeção +{rem:.1f}{mom_txt}). {prob*100:.0f}% de superar {line:g}."
+                f"(projeção +{rem:.1f}{mom_txt}). {prob*100:.0f}% de fazer {threshold}+ no gol."
             ),
             bookmaker=None, created_at="", stage=m.stage, group=m.group,
             kickoff=m.utc_kickoff.isoformat() if m.utc_kickoff else None,

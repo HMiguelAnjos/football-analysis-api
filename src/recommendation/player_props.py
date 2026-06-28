@@ -114,16 +114,19 @@ def _over_pick(player: PlayerSchema, team: str, market: str, per_game: float,
         return None
     prob = poisson_over_under(proj, line)["over"]
     label = _MARKET_LABEL[market]
+    # Mercado de contagem é INTEIRO ("mais de N" = N ou mais). A meia-linha
+    # (N-0.5) fica só no campo `line` pro settlement (over (N-0.5) ≡ ≥N).
+    threshold = int(line + 0.5)
     return PropPick(
         player_name=player.name, team=team, number=getattr(player, "number", None),
         market=market,
-        selection=f"{player.name} — Mais de {line:g} {label}",
+        selection=f"{player.name} — Mais de {threshold} {label}",
         line=line, projection=round(proj, 2), model_probability=round(prob, 4),
         fair_odd=round(1 / prob, 2) if prob > 0 else 0.0,
         confidence_score=round(min(prob, 0.97) * 100, 1),
         recommendation_reason=(
             f"{player.name} faz {per_game:.1f} {label}/jogo; {opp} "
-            f"(projeção {proj:.1f}). Modelo: {prob*100:.0f}% de superar {line:g}."
+            f"(projeção {proj:.1f}). Modelo: {prob*100:.0f}% de fazer {threshold}+ {label}."
         ),
     )
 
