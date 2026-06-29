@@ -704,6 +704,25 @@ class FootballDataService:
         self._disk.set(key, data, config.STATS_MATCH_TTL)
         return data
 
+    def match_player_stats(self, match_id: int, context: str = "general") -> list[dict]:
+        """Estatística FINAL por jogador do jogo (gols, finalizações no alvo,
+        desarmes, assistências) via fixtures/players. Cache em DISCO longo
+        (jogo finalizado é imutável). Base da liquidação dos props de jogador.
+        [] se a fonte não fornecer."""
+        key = f"matchplayers:{context}:{match_id}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return cached
+        getter = getattr(self._football(context), "get_live_player_shots", None)
+        data: list = []
+        if getter is not None:
+            try:
+                data = getter(match_id) or []
+            except Exception:  # noqa: BLE001
+                data = []
+        self._disk.set(key, data, config.STATS_MATCH_TTL)
+        return data
+
     def _match_cards_cached(self, match_id: int, context: str) -> dict:
         """Cartões (amarelo+vermelho) por team_id no jogo, via eventos — cache em
         DISCO longo (imutável), COMPARTILHADO entre os dois times. {} se sem dado

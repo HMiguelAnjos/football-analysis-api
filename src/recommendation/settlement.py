@@ -116,23 +116,34 @@ def settle(market: str, selection: str, line: Optional[float], result: MatchResu
     if market == "anytime_scorer":
         if not result.scorers:
             return VOID
-        return HIT if _norm(selection) in {_norm(s) for s in result.scorers} else MISS
+        name = _player_name(selection)
+        return HIT if _norm(name) in {_norm(s) for s in result.scorers} else MISS
 
-    if market in ("player_shots", "player_shots_on_target", "player_assists") and line is not None:
+    if market in ("player_shots", "player_shots_on_target", "player_assists",
+                  "player_tackles") and line is not None:
         stat_key = {
             "player_shots": "shots",
             "player_shots_on_target": "shots_on_target",
             "player_assists": "assists",
+            "player_tackles": "tackles",
         }[market]
-        # selection esperada: "Nome|over" / "Nome|under"
-        name, _, side_token = selection.partition("|")
+        name = _player_name(selection)
         stats = result.player_stats.get(_norm(name))
         if stats is None or stat_key not in stats:
             return VOID
-        side = _ou(stats[stat_key], line)
-        return _resolve_ou_side("over" if "over" in side_token.lower() else "under", side)
+        # Props são sempre "Mais de N" (over). A meia-linha em `line` (N-0.5)
+        # resolve sem push: over (N-0.5) ≡ valor ≥ N.
+        return _resolve_ou_side("over", _ou(stats[stat_key], line))
 
     return VOID
+
+
+def _player_name(selection: str) -> str:
+    """Extrai o nome do jogador da seleção ('Nome — Mais de 2 desarmes' → 'Nome';
+    'Nome|over' → 'Nome'). Tolera os dois formatos."""
+    s = selection.split("—")[0]      # em-dash do rótulo dos props
+    s = s.split("|")[0]              # formato antigo
+    return s.strip()
 
 
 def _resolve_ou_side(sel: str, side: str) -> str:

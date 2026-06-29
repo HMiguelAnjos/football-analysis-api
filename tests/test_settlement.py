@@ -71,3 +71,18 @@ def test_profit_units():
     assert profit_units("hit", 2.5) == 1.5
     assert profit_units("miss", 2.5) == -1.0
     assert profit_units("push", 2.5) == 0.0
+
+
+def test_player_props_settle_with_player_stats():
+    # Formato real da seleção ("Nome — Mais de N ...") + stats por jogador.
+    res = MatchResult(1, 1, scorers=["Casemiro"], player_stats={
+        "casemiro": {"tackles": 3.0, "shots_on_target": 1.0, "shots": 2.0, "assists": 0.0},
+    })
+    # "Mais de 2 desarmes" → line 1.5 (≥2); fez 3 → hit.
+    assert settle("player_tackles", "Casemiro — Mais de 2 desarmes", 1.5, res) == "hit"
+    # "Mais de 2 chutes no gol" → line 1.5 (≥2); fez 1 no alvo → miss.
+    assert settle("player_shots_on_target", "Casemiro — Mais de 2 chutes no gol", 1.5, res) == "miss"
+    # artilheiro pelo nome extraído da seleção.
+    assert settle("anytime_scorer", "Casemiro — Marcar a qualquer momento", None, res) == "hit"
+    # jogador sem stats → void (não erro).
+    assert settle("player_tackles", "Fulano — Mais de 1 desarmes", 0.5, res) == "void"

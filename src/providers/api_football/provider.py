@@ -518,6 +518,7 @@ class ApiFootballProvider:
                 sh = st.get("shots") or {}
                 g = st.get("games") or {}
                 go = st.get("goals") or {}
+                tk = st.get("tackles") or {}
 
                 def _i(v) -> int:
                     try:
@@ -529,7 +530,8 @@ class ApiFootballProvider:
                     "player_id": pid, "name": player.get("name", "") or "",
                     "team_id": tid, "minutes": _i(g.get("minutes")),
                     "shots_total": _i(sh.get("total")), "shots_on": _i(sh.get("on")),
-                    "goals": _i(go.get("total")),
+                    "goals": _i(go.get("total")), "assists": _i(go.get("assists")),
+                    "tackles": _i(tk.get("total")),
                 })
         return out
 

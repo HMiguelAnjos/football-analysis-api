@@ -19,7 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.db.models import FootballPickResult, FootballRecommendation
-from src.recommendation.settlement import MatchResult, profit_units, settle
+from src.recommendation.settlement import MatchResult, _norm, profit_units, settle
+
+# Mercados de jogador — só pra esses vale a chamada extra de stats por jogador.
+_PLAYER_MARKETS = {
+    "anytime_scorer", "player_shots", "player_shots_on_target",
+    "player_assists", "player_tackles",
+}
 from src.services import recommendation_service as rec_svc
 
 logger = logging.getLogger(__name__)
@@ -59,6 +65,26 @@ def settle_finished(db: Session, data_service) -> dict:
                                     + stats.away.get("yellow_cards", 0) + stats.away.get("red_cards", 0))
             except Exception:  # noqa: BLE001
                 pass
+
+            # Estatística por JOGADOR (gols, finalizações no alvo, desarmes,
+            # assistências) → liquida os props de jogador (senão caem em void).
+            # +1 chamada por jogo, só quando há prop de jogador pendente.
+            if any(rec.market in _PLAYER_MARKETS for rec in recs):
+                try:
+                    players = data_service.match_player_stats(match_id)
+                    if players:
+                        result.scorers = [p["name"] for p in players if (p.get("goals") or 0) >= 1]
+                        result.player_stats = {
+                            _norm(p["name"]): {
+                                "shots": float(p.get("shots_total") or 0),
+                                "shots_on_target": float(p.get("shots_on") or 0),
+                                "assists": float(p.get("assists") or 0),
+                                "tackles": float(p.get("tackles") or 0),
+                            }
+                            for p in players if p.get("name")
+                        }
+                except Exception:  # noqa: BLE001
+                    pass
 
             for rec in recs:
                 status = settle(rec.market, rec.selection, rec.line, result)
