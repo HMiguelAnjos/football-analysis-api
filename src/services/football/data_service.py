@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Prefixo de versão das chaves do cache em disco. Bumpe quando o FORMATO dos
 # dados cacheados mudar (ex.: novo campo em TeamForm/Match) — assim o cache
 # antigo é ignorado em vez de servir dados no formato velho.
-_CACHE_V = "v3"
+_CACHE_V = "v4"  # bump: invalida props em disco (linha mín. de desarmes "mais de 2")
 
 
 class FootballDataService:
