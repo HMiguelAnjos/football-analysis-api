@@ -86,18 +86,25 @@ def _tackle_opp_label(opp_attack_scaler: float) -> str:
     return "ritmo equilibrado"
 
 
-def _best_line(proj: float, floor: float) -> Optional[float]:
-    """A MAIOR meia-linha (0.5, 1.5, 2.5, …) cuja prob de OVER ainda fica ≥ floor.
-    É a linha 'que paga' mais alta que segue provável — em vez de uma linha baixa
-    quase-certa que não paga nada. None se nem o 0.5 passa o piso."""
+# Linha MÍNIMA por mercado. Desarme de 0.5 ("mais de 1") é trivial — todo mundo
+# dá um desarme; só vale recomendar a partir de "mais de 2" (linha 1.5).
+MIN_LINE = {"player_tackles": 1.5}
+
+
+def _best_line(proj: float, floor: float, min_line: float = 0.5) -> Optional[float]:
+    """A MAIOR meia-linha (a partir de ``min_line``) cuja prob de OVER ainda fica
+    ≥ floor. É a linha 'que paga' mais alta que segue provável. None se nem a
+    ``min_line`` passa o piso (aí o jogador NÃO é recomendado)."""
     best: Optional[float] = None
-    for k in range(0, 9):
+    k = int(min_line)            # 0.5→0, 1.5→1
+    while k < 9:
         line = k + 0.5
         p = poisson_over_under(proj, line)["over"]
         if p >= floor:
             best = line          # ainda provável → tenta subir mais
         else:
             break                # prob só cai com linha maior → para
+        k += 1
     return best
 
 
@@ -106,10 +113,9 @@ def _over_pick(player: PlayerSchema, team: str, market: str, per_game: float,
     proj = per_game * scaler
     if proj < 0.5:
         return None
-    # Linha "de verdade": a mais alta que ainda passa o piso de confiança. Pra
-    # quem tem volume (Casemiro 2.5 desarmes) sobe pra over 1.5/2.5; pra quem
-    # tem pouco volume, fica em 0.5 (porque ele realmente não faz mais).
-    line = _best_line(proj, MIN_PROB[market])
+    # Linha "de verdade": a mais alta que ainda passa o piso de confiança,
+    # respeitando a linha mínima do mercado (desarme começa em "mais de 2").
+    line = _best_line(proj, MIN_PROB[market], MIN_LINE.get(market, 0.5))
     if line is None:
         return None
     prob = poisson_over_under(proj, line)["over"]
