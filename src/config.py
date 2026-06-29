@@ -125,6 +125,10 @@ ODDS_SPORT_KEYS: list[str] = [s.strip() for s in _sk.split(",") if s.strip()]
 # Understat (xG/xA) — opcional, scraping público
 # ---------------------------------------------------------------------------
 UNDERSTAT_BASE_URL: str = os.getenv("UNDERSTAT_BASE_URL", "https://understat.com")
+# Understat fica atrás de Cloudflare → scrape direto é bloqueado. Com uma chave
+# do ScraperAPI (que o usuário já tem), as páginas são buscadas via proxy que
+# fura o Cloudflare. Sem a chave, o Understat fica indisponível (degrada).
+SCRAPER_API_KEY: str | None = os.getenv("SCRAPER_API_KEY") or None
 
 # ---------------------------------------------------------------------------
 # Engine de recomendação

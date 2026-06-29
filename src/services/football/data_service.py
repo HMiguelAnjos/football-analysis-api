@@ -666,6 +666,17 @@ class FootballDataService:
             h_adv = self._team_advanced_stats(m.home_team.id, context) if use_adv else None
             a_adv = self._team_advanced_stats(m.away_team.id, context) if use_adv else None
             mf = MatchFeatures.from_domain(m, hf, af, home_adv=h_adv, away_adv=a_adv)
+            if use_adv:
+                # Ponto 1 (grátis): passes-chave por jogo do elenco → Criação.
+                kp_h = self._team_key_passes(m.home_team.id, context, hf.matches_played)
+                kp_a = self._team_key_passes(m.away_team.id, context, af.matches_played)
+                if kp_h is not None:
+                    mf.home.key_passes = kp_h
+                if kp_a is not None:
+                    mf.away.key_passes = kp_a
+                # Ponto 2: Understat (PPDA + xG/xGA) pras ligas europeias, se ligado.
+                self._merge_understat(mf.home, m.home_team.name, m, context)
+                self._merge_understat(mf.away, m.away_team.name, m, context)
             recs = engine.recommend_pre_game(
                 mf, match_id=m.id, home_name=m.home_team.name,
                 away_name=m.away_team.name, include_avoid=include_avoid)
@@ -756,6 +767,43 @@ class FootballDataService:
         self._disk.set(key, dataclasses.asdict(adv) if adv.sample else {},
                        config.STATS_AGG_TTL)
         return adv if adv.sample else None
+
+    def _team_key_passes(self, team_id: int, context: str,
+                         matches: int) -> Optional[float]:
+        """Passes-chave POR JOGO do time, agregados do elenco (a api-football já
+        dá key_passes por jogador — dado GRÁTIS que não usávamos). Proxy de
+        criação. None quando não há dado (mantém o fallback neutro 50)."""
+        if matches <= 0:
+            return None
+        try:
+            pool = self.team_player_pool(team_id, context)
+        except Exception:  # noqa: BLE001
+            return None
+        total = sum((getattr(p, "key_passes", 0) or 0) for p in pool)
+        if total <= 0:
+            return None
+        return total / matches
+
+    def _merge_understat(self, tf, team_name: str, match: Match, context: str) -> None:
+        """Preenche PPDA (e xG/xGA se faltarem) via Understat — ligas europeias.
+        Best-effort: se o provider de xG não for o Understat ou não achar o time,
+        não mexe em nada (degrada pro estado atual)."""
+        prov = registry.get_xg_provider()
+        getter = getattr(prov, "get_team_advanced", None)
+        if getter is None:
+            return
+        try:
+            adv = getter(team_name, match.league_id, match.season)
+        except Exception:  # noqa: BLE001
+            return
+        if not adv:
+            return
+        if adv.get("ppda") is not None:
+            tf.ppda = adv["ppda"]
+        if tf.xg is None and adv.get("xg") is not None:
+            tf.xg = adv["xg"]
+        if tf.xga is None and adv.get("xga") is not None:
+            tf.xga = adv["xga"]
 
     def live_analysis(self, *, context: str = "general", limit: int = 30,
                       include_avoid: bool = False):
