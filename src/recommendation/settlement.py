@@ -9,6 +9,7 @@ jogador, etc.) sem fonte confiável → void (não inventa resultado).
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -39,7 +40,13 @@ def _ou(value: float, line: float) -> str:
 
 
 def _norm(s: str) -> str:
-    return " ".join((s or "").strip().lower().split())
+    """Normaliza nome de jogador pra comparação: minúsculo, sem acento, sem
+    espaço duplo. Fontes diferentes da api-football (elenco vs fixtures/players)
+    às vezes grafam o mesmo jogador com/sem diacrítico ('Vinícius' vs 'Vinicius')
+    — sem isso, um artilheiro real vira MISS falso na liquidação."""
+    s = unicodedata.normalize("NFKD", s or "")
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.strip().lower().split())
 
 
 def settle(market: str, selection: str, line: Optional[float], result: MatchResult) -> str:

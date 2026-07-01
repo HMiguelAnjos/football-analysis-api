@@ -32,7 +32,9 @@ TOP_N_PER_TEAM = 4
 MIN_PROB = {
     "player_shots_on_target": 0.55,
     "player_shots": 0.55,
-    "anytime_scorer": 0.45,
+    # 0.45 estava gerando quase só miss (11% real vs 45% prometido no ledger).
+    # Gol é raro mesmo pro artilheiro nomeado — piso mais conservador.
+    "anytime_scorer": 0.55,
     "player_assists": 0.45,
     "player_tackles": 0.55,
 }

@@ -73,6 +73,14 @@ def test_profit_units():
     assert profit_units("push", 2.5) == 0.0
 
 
+def test_scorer_settle_ignores_accent_mismatch():
+    # Fontes diferentes da api-football grafam o mesmo jogador com/sem acento —
+    # sem normalizar, um artilheiro real virava MISS falso.
+    res = MatchResult(2, 0, scorers=["Vinicius Junior"])   # fonte sem acento
+    assert settle("anytime_scorer", "Vinícius Júnior — Marcar a qualquer momento",
+                  None, res) == "hit"
+
+
 def test_player_props_settle_with_player_stats():
     # Formato real da seleção ("Nome — Mais de N ...") + stats por jogador.
     res = MatchResult(1, 1, scorers=["Casemiro"], player_stats={

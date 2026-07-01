@@ -151,6 +151,7 @@ def performance_breakdown(db: Session, *, only_shown: bool = False) -> dict:
     totals = _empty()
     by_market: dict[str, dict] = {}
     by_confidence: dict[str, dict] = {}
+    by_era: dict[str, dict] = {"legacy_com_odds": _empty(), "atual_sem_odds": _empty()}
 
     def _conf_bucket(score) -> str:
         s = score or 0
@@ -169,7 +170,12 @@ def performance_breakdown(db: Session, *, only_shown: bool = False) -> dict:
         # Calibração: a faixa de confiança só faz sentido pros picks do MODELO
         # (o confidence_score é a probabilidade). Analista entra só no by_market.
         conf = by_confidence.setdefault(_conf_bucket(r.confidence_score), _empty())
-        for agg in (totals, mkt, conf):
+        # Era: o engine ANTIGO (baseado em odds) sempre grava odd real (>0); o
+        # confidence-first ATUAL (sem odds) grava odd=0.0 sempre. Separar os dois
+        # evita que um estoque de picks antigos (asian_handicap/dnb, que o
+        # sistema nem gera mais) distorça a leitura da qualidade ATUAL.
+        era = by_era["legacy_com_odds" if (r.odd or 0) > 0 else "atual_sem_odds"]
+        for agg in (totals, mkt, conf, era):
             if r.status == "hit":
                 agg["won"] += 1
             elif r.status == "miss":
@@ -194,6 +200,7 @@ def performance_breakdown(db: Session, *, only_shown: bool = False) -> dict:
         "totals": _finalize(totals),
         "by_market": {m: _finalize(a) for m, a in by_market.items()},
         "by_confidence": {b: _finalize(a) for b, a in by_confidence.items()},
+        "by_era": {e: _finalize(a) for e, a in by_era.items()},
     }
 
 
