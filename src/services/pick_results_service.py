@@ -150,10 +150,26 @@ def performance_breakdown(db: Session, *, only_shown: bool = False) -> dict:
 
     totals = _empty()
     by_market: dict[str, dict] = {}
+    by_confidence: dict[str, dict] = {}
+
+    def _conf_bucket(score) -> str:
+        s = score or 0
+        if s >= 90:
+            return "90-100"
+        if s >= 80:
+            return "80-89"
+        if s >= 70:
+            return "70-79"
+        if s >= 60:
+            return "60-69"
+        return "<60"
 
     for r in rows:
-        bucket = by_market.setdefault(r.market, _empty())
-        for agg in (totals, bucket):
+        mkt = by_market.setdefault(r.market, _empty())
+        # Calibração: a faixa de confiança só faz sentido pros picks do MODELO
+        # (o confidence_score é a probabilidade). Analista entra só no by_market.
+        conf = by_confidence.setdefault(_conf_bucket(r.confidence_score), _empty())
+        for agg in (totals, mkt, conf):
             if r.status == "hit":
                 agg["won"] += 1
             elif r.status == "miss":
@@ -177,6 +193,7 @@ def performance_breakdown(db: Session, *, only_shown: bool = False) -> dict:
     return {
         "totals": _finalize(totals),
         "by_market": {m: _finalize(a) for m, a in by_market.items()},
+        "by_confidence": {b: _finalize(a) for b, a in by_confidence.items()},
     }
 
 
