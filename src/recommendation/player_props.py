@@ -90,7 +90,7 @@ def _tackle_opp_label(opp_attack_scaler: float) -> str:
 
 # Linha MÍNIMA por mercado. Desarme de 0.5 ("mais de 1") é trivial — todo mundo
 # dá um desarme; só vale recomendar a partir de "mais de 2" (linha 1.5).
-MIN_LINE = {"player_tackles": 1.5}
+MIN_LINE = {"player_tackles": 1.5, "player_shots": 1.5}
 
 
 def _best_line(proj: float, floor: float, min_line: float = 0.5) -> Optional[float]:
@@ -176,6 +176,13 @@ def _team_props(players: list[PlayerSchema], team: str, scaler: float) -> list[P
     for p in sorted(players, key=lambda x: x.shots_on_target or 0, reverse=True)[:TOP_N_PER_TEAM]:
         pick = _over_pick(p, team, "player_shots_on_target",
                           _per_game(p.shots_on_target, p.appearances), scaler, opp)
+        if pick:
+            picks.append(pick)
+
+    # Finalizações TOTAIS (top por chutes) — mercado mais líquido pro finalizador.
+    for p in sorted(players, key=lambda x: x.shots or 0, reverse=True)[:TOP_N_PER_TEAM]:
+        pick = _over_pick(p, team, "player_shots",
+                          _per_game(p.shots, p.appearances), scaler, opp)
         if pick:
             picks.append(pick)
 

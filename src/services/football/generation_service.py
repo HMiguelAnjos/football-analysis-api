@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 # cujo CÓDIGO de seleção (home/draw/away, over/under, yes/no, home_draw/...) o
 # match_markets já produz. Base da geração confidence-first SEM odds.
 # 1X2 saiu (34% no ledger — ruim e marginal no confidence-first). Mantém os que
-# validam bem do placar final: dupla chance, over/under, BTTS.
-_SETTLEABLE_MARKETS = {"double_chance", "over_under", "btts"}
+# validam bem do placar/stats finais: dupla chance, over/under, BTTS, escanteios,
+# cartões (settlement resolve todos).
+_SETTLEABLE_MARKETS = {"double_chance", "over_under", "btts", "corners", "cards"}
 
 
 @dataclass

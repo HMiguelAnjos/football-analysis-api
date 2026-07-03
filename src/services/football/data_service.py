@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Prefixo de versão das chaves do cache em disco. Bumpe quando o FORMATO dos
 # dados cacheados mudar (ex.: novo campo em TeamForm/Match) — assim o cache
 # antigo é ignorado em vez de servir dados no formato velho.
-_CACHE_V = "v5"  # bump: feed curado (1X2 fora, pisos por mercado, cap dupla chance)
+_CACHE_V = "v6"  # bump: novos mercados (escanteios/cartões pré-jogo, finalizações totais)
 
 # Piso de probabilidade POR MERCADO no feed pré-jogo. Os que mais erram no ledger
 # (over/under ~56%, BTTS volátil) exigem mais confiança que o piso global. O
@@ -520,6 +520,25 @@ class FootballDataService:
         p_30 = 1.0 - math.exp(-(lam_h + lam_a) / 3.0)
         add("first_30_goal", "yes", p_30)
 
+        # ESCANTEIOS + CARTÕES pré-jogo — só ligas de clube (a agregação de stats
+        # dá média de escanteios/cartões por time; a Copa não tem esse dado).
+        # Projeta o total (Poisson) e liquida via settlement 'corners'/'cards'.
+        if context != "world_cup" and config.ENABLE_STATS_AGGREGATION:
+            from src.probability.markets import poisson_over_under
+            ha = self._team_advanced_stats(m.home_team.id, context)
+            aa = self._team_advanced_stats(m.away_team.id, context)
+            knockout = bool(m.stage and m.stage != "group")
+            # Linha ~1.5 abaixo da média projetada → over provável (≥ piso) e que
+            # ainda paga (não é o total exato, quase coin-flip).
+            if ha and aa and ha.corners_for and aa.corners_for:
+                c_mean = ha.corners_for + aa.corners_for
+                c_line = max(6.5, round(c_mean) - 1.5)
+                add("corners", "over", poisson_over_under(c_mean, c_line)["over"], c_line)
+            if ha and aa and ha.cards_for and aa.cards_for:
+                k_mean = (ha.cards_for + aa.cards_for) * (1.15 if knockout else 1.0)
+                k_line = max(1.5, round(k_mean) - 1.5)
+                add("cards", "over", poisson_over_under(k_mean, k_line)["over"], k_line)
+
         # Calibração do edge: de-vig + blend modelo×mercado por grupo de mercado;
         # edge irreal (> MAX_EDGE = erro do modelo) vira None (mostra "—").
         from collections import defaultdict
@@ -585,6 +604,10 @@ class FootballDataService:
             return "Gol no 1º tempo"
         if market == "first_30_goal":
             return "Gol até 30 min"
+        if market == "corners":
+            return "Over escanteios"
+        if market == "cards":
+            return "Over cartões"
         return selection
 
     def opportunities(self, *, context: str = "general", limit: int = 30,
@@ -605,7 +628,7 @@ class FootballDataService:
         # marginal no confidence-first); os fracos ganharam piso maior. Sobra o
         # que acerta + as "coisas que podem acontecer" (gol cedo, discrepância).
         focus = {"over_under", "btts", "double_chance", "team_total",
-                 "first_half_goal", "first_30_goal"}
+                 "first_half_goal", "first_30_goal", "corners", "cards"}
 
         matches = self._upcoming_matches(context, only_future=True)
         out = []
