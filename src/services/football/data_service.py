@@ -45,7 +45,13 @@ logger = logging.getLogger(__name__)
 # Prefixo de versão das chaves do cache em disco. Bumpe quando o FORMATO dos
 # dados cacheados mudar (ex.: novo campo em TeamForm/Match) — assim o cache
 # antigo é ignorado em vez de servir dados no formato velho.
-_CACHE_V = "v4"  # bump: invalida props em disco (linha mín. de desarmes "mais de 2")
+_CACHE_V = "v5"  # bump: feed curado (1X2 fora, pisos por mercado, cap dupla chance)
+
+# Piso de probabilidade POR MERCADO no feed pré-jogo. Os que mais erram no ledger
+# (over/under ~56%, BTTS volátil) exigem mais confiança que o piso global. O
+# resto (dupla chance, team_total, gol cedo) usa config.MIN_PICK_PROB. Ajustável
+# conforme a validação semanal.
+_OPP_MARKET_FLOOR = {"over_under": 0.68, "btts": 0.63}
 
 
 class FootballDataService:
@@ -595,10 +601,10 @@ class FootballDataService:
 
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
-        # "Coisas que podem acontecer": dupla chance (favorito não perde),
-        # team_total (discrepância → favorito marca 2+) e gol no 1º tempo (gol
-        # cedo), além de 1x2/over-under/BTTS.
-        focus = {"1x2", "over_under", "btts", "double_chance", "team_total",
+        # Foco CURADO (jul/2026, guiado pela validação): 1X2 saiu (34% no ledger,
+        # marginal no confidence-first); os fracos ganharam piso maior. Sobra o
+        # que acerta + as "coisas que podem acontecer" (gol cedo, discrepância).
+        focus = {"over_under", "btts", "double_chance", "team_total",
                  "first_half_goal", "first_30_goal"}
 
         matches = self._upcoming_matches(context, only_future=True)
@@ -626,14 +632,26 @@ class FootballDataService:
                     continue
                 # Prob exibida: coerente com o edge quando há odds; senão, modelo puro.
                 prob = ((1 + r.edge) / r.odd) if (r.edge is not None and r.odd) else (r.model_prob or 0.0)
-                if prob < config.MIN_PICK_PROB:
+                # Piso POR MERCADO: os que erram muito (over/under, BTTS) exigem
+                # mais confiança pra entrar; o resto usa o piso global.
+                if prob < _OPP_MARKET_FLOOR.get(r.market, config.MIN_PICK_PROB):
                     continue
                 if r.odd is not None and not (min_odd <= r.odd <= max_odd):
                     continue
                 match_picks.append(self._prob_out(m, r, prob, sample, context, tag=tag))
-            # Até 3 entradas por jogo (variedade entre partidas, sem flood).
+            # Até 3 entradas por jogo, com NO MÁXIMO 1 dupla chance (senão o feed
+            # vira só "favorito não perde", seguro mas sem graça).
             match_picks.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
-            out.extend(match_picks[:3])
+            capped, dc = [], 0
+            for p in match_picks:
+                if p.market == "double_chance":
+                    if dc >= 1:
+                        continue
+                    dc += 1
+                capped.append(p)
+                if len(capped) >= 3:
+                    break
+            out.extend(capped)
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         return out[:limit]
 

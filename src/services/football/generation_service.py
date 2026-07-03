@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 # Mercados que o settlement resolve a partir do placar final (settlement.py) e
 # cujo CÓDIGO de seleção (home/draw/away, over/under, yes/no, home_draw/...) o
 # match_markets já produz. Base da geração confidence-first SEM odds.
-_SETTLEABLE_MARKETS = {"1x2", "double_chance", "over_under", "btts"}
+# 1X2 saiu (34% no ledger — ruim e marginal no confidence-first). Mantém os que
+# validam bem do placar final: dupla chance, over/under, BTTS.
+_SETTLEABLE_MARKETS = {"double_chance", "over_under", "btts"}
 
 
 @dataclass
