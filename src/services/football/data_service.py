@@ -207,14 +207,8 @@ class FootballDataService:
         return matches
 
     def matches_domain_for(self, date: Optional[str], context: str) -> list[Match]:
-        """Jogos do contexto. Torneio = por temporada (filtra por dia só se
-        `date` vier). Liga regular = jogos do dia (`date` ou hoje)."""
+        """Jogos das LIGAS acompanhadas no dia (`date` ou hoje)."""
         cfg = competition.resolve(context)
-        if cfg.tournament:
-            ms = self.season_matches_domain(context)
-            if date:
-                ms = [m for m in ms if m.utc_kickoff and m.utc_kickoff.strftime("%Y-%m-%d") == date]
-            return ms
         allowed = set(cfg.league_ids)
         return [m for m in self.matches_by_date_domain(date or self.today_str())
                 if m.league_id in allowed]
@@ -239,31 +233,6 @@ class FootballDataService:
     def get_match(self, match_id: int, context: str = "general") -> Optional[MatchSchema]:
         m = self.match_domain(match_id, context=context)
         return conv.match_to_schema(m, context=context) if m else None
-
-    def groups(self, context: str = "general") -> list[GroupSchema]:
-        cfg = competition.resolve(context)
-        if not cfg.has("groups"):
-            return []
-        key = f"{_CACHE_V}:groups:{context}:{cfg.season}"
-        cached = self._disk.get(key)
-        if cached is not None:
-            return [GroupSchema.model_validate(d) for d in cached]
-        getter = getattr(self._football(context), "get_groups", None)
-        if getter is None:
-            return []
-        domain = getter(cfg.league_ids[0], cfg.season) or []
-        out = [conv.group_to_schema(g) for g in domain]
-        if out:
-            self._disk.set(key, [g.model_dump(mode="json") for g in out], config.STATS_CACHE_TTL)
-        return out
-
-    def bracket(self, context: str = "general") -> list[BracketStageSchema]:
-        cfg = competition.resolve(context)
-        if not cfg.has("bracket"):
-            return []
-        # Torneio inteiro (por temporada) → todas as fases do mata-mata.
-        matches = self.matches_domain_for(None, context)
-        return conv.bracket_from_matches(matches)
 
     def match_statistics(self, match_id: int,
                          context: str = "general") -> Optional[MatchStatisticsSchema]:
@@ -520,10 +489,9 @@ class FootballDataService:
         p_30 = 1.0 - math.exp(-(lam_h + lam_a) / 3.0)
         add("first_30_goal", "yes", p_30)
 
-        # ESCANTEIOS + CARTÕES pré-jogo — só ligas de clube (a agregação de stats
-        # dá média de escanteios/cartões por time; a Copa não tem esse dado).
-        # Projeta o total (Poisson) e liquida via settlement 'corners'/'cards'.
-        if context != "world_cup" and config.ENABLE_STATS_AGGREGATION:
+        # ESCANTEIOS + CARTÕES pré-jogo — usa a média por time da agregação de
+        # stats da liga. Projeta o total (Poisson) e liquida via settlement.
+        if config.ENABLE_STATS_AGGREGATION:
             from src.probability.markets import poisson_over_under
             ha = self._team_advanced_stats(m.home_team.id, context)
             aa = self._team_advanced_stats(m.away_team.id, context)
@@ -695,9 +663,8 @@ class FootballDataService:
         if cached is not None:
             return cached[:limit]
 
-        # Stats avançadas (xG/finalizações/escanteios...) só pras LIGAS DE CLUBE.
-        # A Copa fica sem (api-football não cobre seleções de forma confiável).
-        use_adv = context != "world_cup" and config.ENABLE_STATS_AGGREGATION
+        # Stats avançadas (xG/finalizações/escanteios/passes-chave...) da liga.
+        use_adv = config.ENABLE_STATS_AGGREGATION
 
         engine = MarketRecommendationEngine()
         out = []

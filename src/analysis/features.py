@@ -233,12 +233,16 @@ class MatchFeatures:
                     away_form: Optional[TeamForm], *, odds: Optional[dict] = None,
                     home_adv: Optional["TeamAdvancedStats"] = None,
                     away_adv: Optional["TeamAdvancedStats"] = None) -> "MatchFeatures":
+        # Em LIGA regular o jogo é mando de campo normal (não sede neutra) — o
+        # `knockout` genérico continua (útil pra fases finais de copas), mas a
+        # vantagem de casa NÃO é mais zerada como era na Copa. neutral_venue só
+        # deve ser True para competições realmente em sede única.
         knockout = bool(match and match.stage and match.stage != "group")
         return cls(
             home=TeamFeatures.from_form(home_form).merge_advanced(home_adv),
             away=TeamFeatures.from_form(away_form).merge_advanced(away_adv),
             knockout=knockout,
-            neutral_venue=knockout,                  # torneio em sede única
+            neutral_venue=False,
             importance=80.0 if knockout else None,
             odds=odds or {},
         )
