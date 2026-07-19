@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # Prefixo de versão das chaves do cache em disco. Bumpe quando o FORMATO dos
 # dados cacheados mudar (ex.: novo campo em TeamForm/Match) — assim o cache
 # antigo é ignorado em vez de servir dados no formato velho.
-_CACHE_V = "v6"  # bump: novos mercados (escanteios/cartões pré-jogo, finalizações totais)
+_CACHE_V = "v7"  # bump: temporada por-liga nos props + janela de 3 dias no feed
 
 # Piso de probabilidade POR MERCADO no feed pré-jogo. Os que mais erram no ledger
 # (over/under ~56%, BTTS volátil) exigem mais confiança que o piso global. O
@@ -557,22 +557,34 @@ class FootballDataService:
         only_future=True → SÓ jogos que ainda não começaram (kickoff > agora):
         usado em props/recomendações, cujo modelo é PRÉ-JOGO — não faz sentido
         recomendar partida em andamento ou já encerrada. only_future=False
-        mantém uma janela de 3h após o kickoff (ao vivo)."""
+        mantém uma janela de 3h após o kickoff (ao vivo).
+
+        Varre HOJE + próximos 3 dias: a api-football indexa fixtures por data,
+        então a janela de 72h só enxerga jogos futuros (ex.: rodada de terça)
+        se buscarmos cada dia — não só o de hoje."""
         from datetime import timedelta
         now = datetime.now(timezone.utc)
         horizon = now + timedelta(hours=72)
         floor = now if only_future else now - timedelta(hours=3)
+        allowed = set(competition.resolve(context).league_ids)
+        seen: set[int] = set()
         out = []
-        for m in self.matches_domain_for(None, context):
-            if m.status in ("finished", "live"):
-                continue
-            if m.utc_kickoff is None:
-                # Sem horário não dá pra garantir que é futuro → fora do modo estrito.
-                if not only_future:
+        for day in range(4):                       # hoje, +1, +2, +3
+            date_str = (now + timedelta(days=day)).strftime("%Y-%m-%d")
+            for m in self.matches_by_date_domain(date_str):
+                if m.league_id not in allowed or m.id in seen:
+                    continue
+                if m.status in ("finished", "live"):
+                    continue
+                if m.utc_kickoff is None:
+                    # Sem horário não dá pra garantir futuro → fora do modo estrito.
+                    if not only_future:
+                        seen.add(m.id)
+                        out.append(m)
+                    continue
+                if floor <= m.utc_kickoff <= horizon:
+                    seen.add(m.id)
                     out.append(m)
-                continue
-            if floor <= m.utc_kickoff <= horizon:
-                out.append(m)
         return out
 
     # Rótulo PT-BR + motivo de uma linha de mercado calibrada, no feed de valor.
@@ -1143,8 +1155,8 @@ class FootballDataService:
                 continue
 
             # Taxa de temporada (chutes no gol/jogo) por jogador.
-            pool = (self.team_player_pool(m.home_team.id, context)
-                    + self.team_player_pool(m.away_team.id, context))
+            pool = (self.team_player_pool(m.home_team.id, context, season=self._league_season(m.league_id, context))
+                    + self.team_player_pool(m.away_team.id, context, season=self._league_season(m.league_id, context)))
             rate_by_id = {
                 int(p.id): (p.shots_on_target / p.appearances if p.appearances else 0.0)
                 for p in pool
@@ -1236,8 +1248,8 @@ class FootballDataService:
             if not live_players:
                 continue
 
-            pool = (self.team_player_pool(m.home_team.id, context)
-                    + self.team_player_pool(m.away_team.id, context))
+            pool = (self.team_player_pool(m.home_team.id, context, season=self._league_season(m.league_id, context))
+                    + self.team_player_pool(m.away_team.id, context, season=self._league_season(m.league_id, context)))
             # Gol de bola rolando por jogo + batedor de pênalti por time.
             rate_by_id = {
                 int(p.id): (max((p.goals or 0) - (p.penalty_scored or 0), 0) / p.appearances
@@ -1405,11 +1417,14 @@ class FootballDataService:
                        config.CATALOG_CACHE_TTL)
         return stats
 
-    def team_player_pool(self, team_id: int, context: str = "general") -> list[PlayerSchema]:
-        """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção) —
-        base das props ANTES do time jogar no torneio. Cacheado por time."""
+    def team_player_pool(self, team_id: int, context: str = "general",
+                         season: Optional[int] = None) -> list[PlayerSchema]:
+        """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção).
+        `season` = temporada atual da liga do time (Brasileirão=2026, Europa=
+        2025); None cai na season do contexto. Cacheado por time+season."""
+        season = season or config.CURRENT_SEASON
         # ":n3" = inclui nt_appearances (jogos pela seleção) no pool.
-        key = f"{_CACHE_V}:squadpool:n3:{context}:{team_id}:{config.CURRENT_SEASON}"
+        key = f"{_CACHE_V}:squadpool:n3:{context}:{team_id}:{season}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
@@ -1429,7 +1444,7 @@ class FootballDataService:
             relevant.sort(key=lambda s: 0 if s.position == "Attacker" else 1)
             for sp in relevant[: self._SQUAD_ENRICH_CAP]:
                 stats = self._player_season_cached(
-                    sp.player_id, config.CURRENT_SEASON, context,
+                    sp.player_id, season, context,
                     national_team_id=team_id)
                 if stats is None or stats.appearances <= 0:
                     continue
@@ -1480,19 +1495,17 @@ class FootballDataService:
         af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
 
         starters = self._starters(match_id, context)
+        season = self._league_season(m.league_id, context)
 
         def pool(team_id: int):
-            players = self.team_player_pool(team_id, context)
+            players = self.team_player_pool(team_id, context, season=season)
             xi = starters.get(team_id)
             if xi:                                    # escalação saiu → só titulares
                 return [p for p in players if int(p.id) in xi]
-            # Sem escalação: prioriza prováveis titulares pelos MAIS CONVOCADOS
-            # (jogos pela seleção). Corta fringe/novatos sem caps.
-            capped = [p for p in players if (p.nt_appearances or 0) > 0]
-            if len(capped) >= 4:
-                capped.sort(key=lambda p: p.nt_appearances or 0, reverse=True)
-                return capped[:10]
-            return players                            # sem dados de seleção → elenco
+            # Sem escalação: usa o elenco já enriquecido (atacantes primeiro,
+            # cortado no _SQUAD_ENRICH_CAP) e ordena pelos que MAIS JOGARAM a
+            # temporada na liga — proxy de titularidade que vale pra clube.
+            return sorted(players, key=lambda p: p.appearances or 0, reverse=True)
 
         picks = generate_player_props(
             match=m, home_form=hf, away_form=af,
