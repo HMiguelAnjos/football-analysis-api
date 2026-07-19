@@ -70,9 +70,10 @@ class FootballRecommendation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Contexto de competição: 'general' | 'world_cup'. Isola picks da Copa dos
-    # picks de futebol geral (filtro em todas as queries).
+    # Contexto de competição (hoje só 'general' = ligas). Mantido genérico p/
+    # competições futuras. A Copa do Mundo foi removida (jul/2026).
     context: Mapped[str] = mapped_column(String(20), nullable=False, default="general", index=True)
+    # Fase/grupo — só preenchidos em copas/mata-mata (nulos em liga regular).
     stage: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     group: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
 

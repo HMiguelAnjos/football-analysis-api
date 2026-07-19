@@ -23,8 +23,6 @@ from src import competition, config
 from src.providers import registry, serde
 from src.providers.base import Match, MatchOdds, TeamForm
 from src.schemas.football_schemas import (
-    BracketStageSchema,
-    GroupSchema,
     LeagueSchema,
     MatchInjurySchema,
     MatchMainOddsSchema,

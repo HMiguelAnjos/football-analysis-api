@@ -89,13 +89,9 @@ class ApiFootballProvider:
                 raise ValueError("ApiFootballProvider precisa de API_FOOTBALL_KEY")
             client = ApiFootballClient(config.API_FOOTBALL_KEY)
         self._client = client
-        # Allow-list dos jogos do dia = ligas gerais + a liga da Copa do Mundo.
-        # O data_service filtra por CONTEXTO depois; aqui só evitamos trazer o
-        # mundo inteiro de /fixtures?date=. Sem incluir a Copa, o modo world_cup
-        # viria vazio em produção.
-        self._leagues = list(dict.fromkeys(
-            [*config.DEFAULT_LEAGUE_IDS, config.WORLD_CUP_LEAGUE_ID]
-        ))
+        # Allow-list dos jogos do dia = ligas acompanhadas (DEFAULT_LEAGUE_IDS).
+        # Evita trazer o mundo inteiro de /fixtures?date=.
+        self._leagues = list(dict.fromkeys(config.DEFAULT_LEAGUE_IDS))
         self._season = config.CURRENT_SEASON
 
     # --- parsing (estático, puro) ------------------------------------------

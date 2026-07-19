@@ -53,7 +53,7 @@ class Match:
     away_goals: Optional[int] = None
     minute: Optional[int] = None     # minuto do jogo, se ao vivo
     venue: str = ""
-    # ── Campos de torneio (preenchidos só no contexto Copa do Mundo) ──────
+    # ── Campos de copa/mata-mata (nulos em liga regular) ─────────────────
     stage: Optional[str] = None      # "group" | "round_of_16" | "quarter" | ...
     group: Optional[str] = None      # "A", "B", ... (fase de grupos)
     city: str = ""

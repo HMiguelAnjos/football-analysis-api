@@ -195,7 +195,7 @@ def predict_markets(home_form: TeamForm, away_form: TeamForm,
     """Previsão do modelo SÓ a partir da forma (sem odds de casa).
 
     Devolve probabilidades dos principais mercados + gols esperados. Usado pra
-    dar "análise" mesmo quando não há odds (ex.: fonte grátis openfootball).
+    dar "análise" mesmo quando não há odds de casa.
     `lambdas` permite injetar gols esperados de uma fonte melhor (ratings de
     força em torneios) em vez de derivar da forma.
     """

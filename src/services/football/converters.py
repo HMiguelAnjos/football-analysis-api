@@ -111,20 +111,6 @@ def match_to_schema(
     )
 
 
-_STAGE_LABELS = {
-    "round_of_32": "16-avos de final", "round_of_16": "Oitavas de final",
-    "quarter": "Quartas de final", "semi": "Semifinal",
-    "third_place": "Disputa de 3º lugar", "final": "Final", "knockout": "Mata-mata",
-}
-_STAGE_ORDER = ["round_of_32", "round_of_16", "quarter", "semi", "third_place",
-                "final", "knockout"]
-
-
-def group_to_schema(g) -> "GroupSchema":
-    from src.schemas.football_schemas import GroupSchema
-    return GroupSchema(name=g.name, standings=[standing_to_schema(s) for s in g.standings])
-
-
 def standing_to_schema(s) -> "StandingSchema":
     from src.schemas.football_schemas import StandingSchema
     return StandingSchema(
@@ -133,27 +119,6 @@ def standing_to_schema(s) -> "StandingSchema":
         goals_against=s.goals_against, goal_diff=s.goal_diff,
         group=s.group, form=s.form,
     )
-
-
-def bracket_from_matches(matches: list[Match]):
-    """Agrupa os jogos de mata-mata por fase, na ordem do torneio."""
-    from src.schemas.football_schemas import BracketStageSchema, BracketTieSchema
-    by_stage: dict[str, list[BracketTieSchema]] = {}
-    for m in matches:
-        if not m.stage or m.stage == "group":
-            continue
-        by_stage.setdefault(m.stage, []).append(BracketTieSchema(
-            match_id=m.id, stage=m.stage, home=team_ref(m.home_team),
-            away=team_ref(m.away_team), home_score=m.home_goals,
-            away_score=m.away_goals, penalty_home=m.penalty_home,
-            penalty_away=m.penalty_away, winner=m.winner, status=m.status,
-            kickoff=_iso(m.utc_kickoff),
-        ))
-    ordered = sorted(by_stage.keys(), key=lambda s: _STAGE_ORDER.index(s) if s in _STAGE_ORDER else 99)
-    return [
-        BracketStageSchema(stage=s, label=_STAGE_LABELS.get(s, s), ties=by_stage[s])
-        for s in ordered
-    ]
 
 
 def match_summary(m: Match) -> MatchSummarySchema:

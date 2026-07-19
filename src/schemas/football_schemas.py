@@ -122,32 +122,6 @@ class StandingSchema(BaseModel):
     form: Optional[str] = None
 
 
-class GroupSchema(BaseModel):
-    name: str
-    standings: list[StandingSchema]
-
-
-class BracketTieSchema(BaseModel):
-    """Um confronto do mata-mata."""
-    match_id: int
-    stage: str
-    home: TeamRefSchema
-    away: TeamRefSchema
-    home_score: Optional[int] = None
-    away_score: Optional[int] = None
-    penalty_home: Optional[int] = None
-    penalty_away: Optional[int] = None
-    winner: Optional[str] = None
-    status: str
-    kickoff: Optional[str] = None
-
-
-class BracketStageSchema(BaseModel):
-    stage: str
-    label: str
-    ties: list[BracketTieSchema]
-
-
 class ContextSchema(BaseModel):
     key: str
     label: str

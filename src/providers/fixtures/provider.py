@@ -99,62 +99,6 @@ _PLAYERS: dict[int, PlayerSeasonStats] = {
 }
 
 
-# ── Copa do Mundo (contexto world_cup, league_id=1) ─────────────────────────
-_BRAZIL = Team(id=6, name="Brazil", short_name="BRA")
-_FRANCE = Team(id=2, name="France", short_name="FRA")
-_ARGENTINA = Team(id=26, name="Argentina", short_name="ARG")
-_ENGLAND = Team(id=10, name="England", short_name="ENG")
-
-_TEAMS.update({t.id: t for t in (_BRAZIL, _FRANCE, _ARGENTINA, _ENGLAND)})
-
-_WC = "FIFA World Cup"
-_WC_LID = 1
-
-_WC_MATCHES: dict[int, Match] = {
-    2001: Match(
-        id=2001, league_id=_WC_LID, league_name=_WC, season=2026,
-        utc_kickoff=_kickoff(2), status="scheduled",
-        home_team=_BRAZIL, away_team=_FRANCE, venue="Estadio Azteca",
-        stage="group", group="A", city="Mexico City",
-    ),
-    2002: Match(
-        id=2002, league_id=_WC_LID, league_name=_WC, season=2026,
-        utc_kickoff=_kickoff(6), status="scheduled",
-        home_team=_ARGENTINA, away_team=_ENGLAND, venue="MetLife Stadium",
-        stage="round_of_16", city="New York",
-    ),
-    2003: Match(
-        id=2003, league_id=_WC_LID, league_name=_WC, season=2026,
-        utc_kickoff=_kickoff(-30), status="finished",
-        home_team=_FRANCE, away_team=_ENGLAND, venue="SoFi Stadium",
-        stage="quarter", city="Los Angeles",
-        home_goals=1, away_goals=1, extra_time_home=1, extra_time_away=1,
-        penalty_home=4, penalty_away=3, winner="home",
-    ),
-}
-
-_WC_FORMS: dict[int, TeamForm] = {
-    6: TeamForm(team_id=6, matches_played=6, goals_for=2.2, goals_against=0.7,
-                xg=2.0, xga=0.8, wins=5, draws=1, losses=0, recent_form="WWWDW"),
-    2: TeamForm(team_id=2, matches_played=6, goals_for=2.0, goals_against=0.9,
-                xg=1.9, xga=1.0, wins=4, draws=1, losses=1, recent_form="WDWLW"),
-    26: TeamForm(team_id=26, matches_played=6, goals_for=1.9, goals_against=0.8,
-                 xg=1.8, xga=0.9, wins=4, draws=2, losses=0, recent_form="WDWWD"),
-    10: TeamForm(team_id=10, matches_played=6, goals_for=1.7, goals_against=1.0,
-                 xg=1.6, xga=1.1, wins=4, draws=0, losses=2, recent_form="WLWWL"),
-}
-_FORMS.update(_WC_FORMS)
-
-_WC_GROUPS: list[Group] = [
-    Group(name="Group A", standings=[
-        Standing(rank=1, team=_BRAZIL, points=7, played=3, win=2, draw=1, lose=0,
-                 goals_for=6, goals_against=2, goal_diff=4, group="A", form="WWD"),
-        Standing(rank=2, team=_FRANCE, points=6, played=3, win=2, draw=0, lose=1,
-                 goals_for=5, goals_against=3, goal_diff=2, group="A", form="WLW"),
-    ]),
-]
-
-
 def _odds_for(match: Match) -> MatchOdds:
     """Odds mock coerentes (com pequena margem) pros principais mercados."""
     markets: dict[str, MarketOdds] = {
@@ -183,17 +127,14 @@ def _odds_for(match: Match) -> MatchOdds:
 # --- FootballDataProvider ---------------------------------------------------
 
 def get_matches_by_date(date: str) -> list[Match]:
-    # Geral + Copa do Mundo; o data_service filtra por contexto (league_ids).
-    return list(_MATCHES.values()) + list(_WC_MATCHES.values())
+    return list(_MATCHES.values())
 
 
 def get_match(match_id: int) -> Optional[Match]:
-    return _MATCHES.get(match_id) or _WC_MATCHES.get(match_id)
+    return _MATCHES.get(match_id)
 
 
 def get_season_matches(league_id: int, season: int) -> list[Match]:
-    if league_id == _WC_LID:
-        return list(_WC_MATCHES.values())
     return [m for m in _MATCHES.values() if m.league_id == league_id]
 
 
@@ -214,13 +155,7 @@ def get_team(team_id: int) -> Optional[Team]:
 
 
 def get_teams(league_id: Optional[int] = None, search: Optional[str] = None) -> list[Team]:
-    wc_ids = {6, 2, 26, 10}
-    if league_id == _WC_LID:
-        teams = [_TEAMS[i] for i in wc_ids]
-    elif league_id is not None:
-        teams = [t for t in _TEAMS.values() if t.id not in wc_ids]
-    else:
-        teams = list(_TEAMS.values())
+    teams = list(_TEAMS.values())
     if search:
         s = search.strip().lower()
         teams = [t for t in teams if s in t.name.lower()]
@@ -228,7 +163,7 @@ def get_teams(league_id: Optional[int] = None, search: Optional[str] = None) -> 
 
 
 def get_groups(league_id: Optional[int] = None, season: Optional[int] = None) -> list[Group]:
-    return _WC_GROUPS if league_id == _WC_LID else []
+    return []
 
 
 def get_players(team_id: Optional[int] = None, search: Optional[str] = None) -> list[PlayerSeasonStats]:

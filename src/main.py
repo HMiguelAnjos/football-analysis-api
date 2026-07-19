@@ -34,10 +34,8 @@ from src.schemas.auth_schemas import (
 from src import competition
 from src.schemas.football_schemas import (
     AnalysisRecommendationOut,
-    BracketStageSchema,
     ContextSchema,
     GenerateRequest,
-    GroupSchema,
     LeagueSchema,
     LivePickCreate,
     LivePickOut,
@@ -750,7 +748,7 @@ def performance(db: Session = Depends(get_db)):
         return PerformanceSummary(totals=PerfTotals())
 
 
-# ── Contexto de competição (catálogo: futebol geral / Copa do Mundo) ────────
+# ── Contexto de competição (catálogo das ligas) ────────────────────────────
 @app.get("/football/context", response_model=list[ContextSchema])
 def football_contexts():
     """Lista os contextos disponíveis + features. O front decide qual está
