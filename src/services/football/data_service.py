@@ -95,16 +95,42 @@ class FootballDataService:
             self._disk.set(key, serde.match_to_dict(m), config.MATCHES_CACHE_TTL)
         return m
 
-    def team_form(self, team_id: int, last_n: int = 10,
-                  context: str = "general") -> Optional[TeamForm]:
+    def _league_season(self, league_id: Optional[int], context: str = "general") -> int:
+        """Temporada atual da LIGA (detectada da api-football; varia por liga —
+        Brasileirão=2026, Europa=2025). Cacheada longa (muda 1×/ano). Fallback:
+        a season do contexto (config.CURRENT_SEASON)."""
         cfg = competition.resolve(context)
-        key = f"{_CACHE_V}:form:{context}:{team_id}:{last_n}"
+        if not league_id:
+            return cfg.season
+        key = f"{_CACHE_V}:leagueseason:{league_id}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return int(cached)
+        season = None
+        getter = getattr(self._football(context), "get_current_season", None)
+        if getter is not None:
+            try:
+                season = getter(league_id)
+            except Exception:  # noqa: BLE001
+                season = None
+        season = int(season) if season else cfg.season
+        self._disk.set(key, season, config.CATALOG_CACHE_TTL)
+        return season
+
+    def team_form(self, team_id: int, last_n: int = 10, context: str = "general",
+                  league_id: Optional[int] = None) -> Optional[TeamForm]:
+        cfg = competition.resolve(context)
+        # Liga REAL do time (do jogo) + temporada atual DELA — sem isso, um time
+        # do Brasileirão era consultado como se fosse da Premier e vinha vazio.
+        lid = league_id or cfg.league_ids[0]
+        season = self._league_season(league_id, context)
+        key = f"{_CACHE_V}:form:{context}:{lid}:{season}:{team_id}:{last_n}"
         cached = self._disk.get(key)
         if cached is not None:
             return serde.form_from_dict(cached)
         getter = self._football(context).get_team_form
         try:
-            form = getter(team_id, last_n, league_id=cfg.league_ids[0], season=cfg.season)
+            form = getter(team_id, last_n, league_id=lid, season=season)
         except TypeError:
             # Provider sem suporte a league/season (ex.: fixtures simples).
             form = getter(team_id, last_n)
@@ -245,8 +271,8 @@ class FootballDataService:
         raw = self._football(context).get_match_statistics(match_id)
         home_side = raw.home if raw else {}
         away_side = raw.away if raw else {}
-        home_form = self.team_form(m.home_team.id, context=context)
-        away_form = self.team_form(m.away_team.id, context=context)
+        home_form = self.team_form(m.home_team.id, context=context, league_id=m.league_id)
+        away_form = self.team_form(m.away_team.id, context=context, league_id=m.league_id)
 
         lineups = self._football(context).get_lineups(match_id) or []
         lu_home = next((lu for lu in lineups if lu.team_id == m.home_team.id), None)
@@ -439,8 +465,8 @@ class FootballDataService:
         m = self.match_domain(match_id, context=context)
         if m is None:
             return []
-        hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
-        af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+        hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
+        af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
         lam_h, lam_a = self._lambdas(m, hf, af, context)
         sm = build_score_matrix(lam_h, lam_a)
 
@@ -602,8 +628,8 @@ class FootballDataService:
             rows = self.match_markets(m.id, context=context)
             if not rows:
                 continue
-            hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
-            af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+            hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
+            af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
             sample = min(hf.matches_played, af.matches_played)
             # Discrepância: favorito do 1x2 muito provável (>=58%) → confronto desigual.
             w1x2 = {r.selection: (r.model_prob or 0) for r in rows if r.market == "1x2"}
@@ -667,8 +693,8 @@ class FootballDataService:
         engine = MarketRecommendationEngine()
         out = []
         for m in self._upcoming_matches(context, only_future=True):
-            hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
-            af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+            hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
+            af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
             h_adv = self._team_advanced_stats(m.home_team.id, context) if use_adv else None
             a_adv = self._team_advanced_stats(m.away_team.id, context) if use_adv else None
             mf = MatchFeatures.from_domain(m, hf, af, home_adv=h_adv, away_adv=a_adv)
@@ -978,8 +1004,8 @@ class FootballDataService:
         for m in self.live_matches(context):
             if m.home_goals is None or m.away_goals is None:
                 continue
-            hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
-            af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+            hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
+            af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
             lh, la = self._lambdas(m, hf, af, context)
             red_h, red_a = self._red_cards(m, context)
             mom_h, mom_a = self._momentum(m, context)
@@ -1450,8 +1476,8 @@ class FootballDataService:
         m = self.match_domain(match_id, context=context)
         if m is None:
             return []
-        hf = self.team_form(m.home_team.id, context=context) or TeamForm(team_id=m.home_team.id)
-        af = self.team_form(m.away_team.id, context=context) or TeamForm(team_id=m.away_team.id)
+        hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
+        af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
 
         starters = self._starters(match_id, context)
 

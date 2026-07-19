@@ -58,8 +58,8 @@ class GenerationService:
         min_confidence: Optional[float] = None,
     ) -> list[RecommendationCandidate]:
         """Roda o engine pra UM jogo. [] se faltar forma ou odds."""
-        home_form = self._data.team_form(match.home_team.id, context=context)
-        away_form = self._data.team_form(match.away_team.id, context=context)
+        home_form = self._data.team_form(match.home_team.id, context=context, league_id=match.league_id)
+        away_form = self._data.team_form(match.away_team.id, context=context, league_id=match.league_id)
         if home_form is None or away_form is None:
             logger.info("generation: sem forma pro jogo %s — pulado", match.id)
             return []
@@ -205,8 +205,8 @@ class GenerationService:
 
     def _generate_props(self, db, match, context, players_by_team, persist) -> int:
         from src.recommendation.player_props import generate_player_props
-        home_form = self._data.team_form(match.home_team.id, context=context)
-        away_form = self._data.team_form(match.away_team.id, context=context)
+        home_form = self._data.team_form(match.home_team.id, context=context, league_id=match.league_id)
+        away_form = self._data.team_form(match.away_team.id, context=context, league_id=match.league_id)
         if home_form is None or away_form is None:
             return 0
         hp = players_by_team.get(match.home_team.id, [])

@@ -607,6 +607,21 @@ class ApiFootballProvider:
             shots_on_target=float(_i(shots.get("on"))),
         )
 
+    def get_current_season(self, league_id: int) -> Optional[int]:
+        """Temporada ATUAL da liga (o campo season varia por liga: Europa usa o
+        ano de início — 2025 = 2025-26; Brasileirão usa o ano civil — 2026).
+        Lê o flag `current: true` de /leagues. None se indisponível."""
+        items = self._client.response("leagues", {"id": league_id})
+        if not items:
+            return None
+        for s in items[0].get("seasons", []) or []:
+            if s.get("current"):
+                try:
+                    return int(s.get("year"))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
     def get_leagues(self) -> list[League]:
         out: list[League] = []
         for lid in self._leagues:
