@@ -53,7 +53,7 @@ _LIGHTWEIGHT_MIGRATIONS: list[str] = [
     "ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user'",
     "ALTER TABLE users "
     "ADD COLUMN IF NOT EXISTS plan VARCHAR(32) NOT NULL DEFAULT 'free'",
-    # context/stage/group — modo Copa do Mundo. Picks legados viram 'general'.
+    # context/stage/group — genéricos (context default 'general'; stage/group só em copas).
     "ALTER TABLE football_recommendations "
     "ADD COLUMN IF NOT EXISTS context VARCHAR(20) NOT NULL DEFAULT 'general'",
     "ALTER TABLE football_recommendations ADD COLUMN IF NOT EXISTS stage VARCHAR(20)",

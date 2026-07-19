@@ -209,9 +209,8 @@ CATALOG_CACHE_TTL: int = int(os.getenv("CATALOG_CACHE_TTL", str(24 * 3600)))
 
 # ── Agregação de estatísticas por jogo (xG/finalizações/escanteios/cartões) ──
 # Liga os scores avançados da engine de análise com DADO REAL, agregando as
-# stats dos últimos N jogos (api-football /fixtures/statistics). Vale pras LIGAS
-# DE CLUBE (a Copa fica sem — api-football não cobre seleções de forma confiável
-# e o usuário pediu pra deixar de fora). Degrada gracioso: sem stat, fallback-50.
+# stats dos últimos N jogos da liga (api-football /fixtures/statistics).
+# Degrada gracioso: sem stat suficiente, cai no fallback neutro (score 50).
 ENABLE_STATS_AGGREGATION: bool = _flag("ENABLE_STATS_AGGREGATION", "1")
 STATS_AGG_LAST_N: int = int(os.getenv("STATS_AGG_LAST_N", "10"))
 # Cartões reais por jogo via /fixtures/events (a estatística agregada não traz
