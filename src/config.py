@@ -82,24 +82,8 @@ DEFAULT_LEAGUE_IDS: list[int] = [
 # Temporada corrente (ano de início). Ex: 2025 = temporada 2025/26.
 CURRENT_SEASON: int = int(os.getenv("CURRENT_SEASON", "2025"))
 
-# ---------------------------------------------------------------------------
-# Modo Copa do Mundo (competition context = "world_cup")
-# ---------------------------------------------------------------------------
-# Na api-football, a Copa do Mundo é a liga de id 1. Temporada = ano do torneio.
-WORLD_CUP_LEAGUE_ID: int = int(os.getenv("WORLD_CUP_LEAGUE_ID", "1"))
-WORLD_CUP_SEASON: int = int(os.getenv("WORLD_CUP_SEASON", "2026"))
-# Sport key da Copa no The Odds API (odds de partida).
-WORLD_CUP_ODDS_SPORT_KEY: str = os.getenv(
-    "WORLD_CUP_ODDS_SPORT_KEY", "soccer_fifa_world_cup"
-)
-# Provider de DADOS da Copa: "openfootball" (grátis, sem chave) | "api_football"
-# | "fixtures". Default openfootball — Copa não depende da api-football paga.
-WORLD_CUP_PROVIDER: str = os.getenv("WORLD_CUP_PROVIDER", "openfootball").strip().lower()
-# Base dos JSONs públicos do openfootball (domínio público, sem chave).
-OPENFOOTBALL_BASE_URL: str = os.getenv(
-    "OPENFOOTBALL_BASE_URL",
-    "https://raw.githubusercontent.com/openfootball/worldcup.json/master",
-)
+# (Removido jul/2026) O modo Copa do Mundo e o provider openfootball foram
+# retirados — o produto voltou a ser 100% baseado em ligas regulares.
 
 # ---------------------------------------------------------------------------
 # The Odds API — odds de futebol
@@ -174,8 +158,10 @@ RATINGS_ITERATIONS: int = int(os.getenv("RATINGS_ITERATIONS", "12"))
 # contra adversários fracos em eliminatórias/amistosos, o que derrubava o total
 # de gols (Under 2.5 em todo jogo). 0.55 puxa ~45% rumo à média → totais sãos.
 RATINGS_SHRINK: float = float(os.getenv("RATINGS_SHRINK", "0.55"))
-# Vantagem de casa em torneio (1.0 = neutro; sede compartilhada/neutra).
-TOURNAMENT_HOME_ADV: float = float(os.getenv("TOURNAMENT_HOME_ADV", "1.0"))
+# Vantagem de casa da LIGA: mandante marca ~12% mais (lambda_home ×, lambda_away
+# ÷). 1.0 = neutro. Antes era 1.0 (herança da Copa em sede neutra), o que ZERAVA
+# a vantagem de casa nas ligas — corrigido jul/2026.
+LEAGUE_HOME_ADV: float = float(os.getenv("LEAGUE_HOME_ADV", "1.12"))
 
 # ---------------------------------------------------------------------------
 # Cache

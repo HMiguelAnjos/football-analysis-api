@@ -44,16 +44,15 @@ def _tick_once() -> None:
     db = SessionLocal()
     try:
         gen = GenerationService()
-        for ctx in ("general", "world_cup"):
-            try:
-                res = gen.generate(db, context=ctx)
-                logger.info(
-                    "generation[%s]: %d persistidas (mercado=%d, props=%d, jogos=%d)",
-                    ctx, res.get("persisted", 0), res.get("market_model", 0),
-                    res.get("player_props", 0), res.get("matches_analyzed", 0),
-                )
-            except Exception as exc:  # noqa: BLE001
-                db.rollback()
-                logger.warning("generation[%s] falhou (%s)", ctx, exc)
+        try:
+            res = gen.generate(db, context="general")
+            logger.info(
+                "generation: %d persistidas (mercado=%d, props=%d, jogos=%d)",
+                res.get("persisted", 0), res.get("market_model", 0),
+                res.get("player_props", 0), res.get("matches_analyzed", 0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning("generation falhou (%s)", exc)
     finally:
         db.close()

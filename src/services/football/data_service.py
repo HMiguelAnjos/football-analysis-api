@@ -453,7 +453,7 @@ class FootballDataService:
         ratings = self._ratings(context)
         if ratings is not None and ratings.has(m.home_team.id) and ratings.has(m.away_team.id):
             return ratings.lambdas(m.home_team.id, m.away_team.id,
-                                   home_advantage=config.TOURNAMENT_HOME_ADV)
+                                   home_advantage=config.LEAGUE_HOME_ADV)
         return expected_goals(hf, af)
 
     def match_markets(self, match_id: int, context: str = "general"):

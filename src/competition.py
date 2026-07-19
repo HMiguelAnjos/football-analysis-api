@@ -1,13 +1,15 @@
 """
-Contexto de competição — fonte ÚNICA da verdade pra alternar "futebol geral" ↔
-"Copa do Mundo".
+Contexto de competição — fonte ÚNICA da verdade das ligas regulares.
 
 Toda regra que depende do contexto (quais ligas, qual season, quais sport keys
-de odds, quais features de torneio) mora AQUI. Services e rotas só perguntam
-`resolve(context)` — sem `if context == ...` espalhado pelo código.
+de odds) mora AQUI. Services e rotas só perguntam `resolve(context)` — sem
+`if context == ...` espalhado pelo código.
 
-Adicionar um novo contexto no futuro (ex.: "champions_league") = um item em
-`_REGISTRY`, sem tocar em service/rota.
+Hoje há um único contexto: `general` (ligas regulares). A abstração continua
+genérica — adicionar um novo contexto no futuro (ex.: "champions_league") = um
+item em `_registry`, sem tocar em service/rota. O contexto exclusivo da Copa do
+Mundo foi REMOVIDO (jul/2026, evento encerrado) — junto com suas features de
+torneio (grupos/chaveamento) e o provider openfootball.
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from dataclasses import dataclass, field
 from src import config
 
 GENERAL = "general"
-WORLD_CUP = "world_cup"
 
 
 @dataclass(frozen=True)
@@ -27,10 +28,10 @@ class CompetitionConfig:
     league_ids: list[int]
     season: int
     odds_sport_keys: list[str]
-    # Features de torneio habilitadas (grupos, chaveamento, outrights...).
+    # Features opcionais por contexto (reservado p/ competições futuras).
     features: list[str] = field(default_factory=list)
-    # Torneio = conjunto fechado de jogos por temporada (busca por season, não
-    # por "hoje"). Liga regular = False (jogos do dia).
+    # Torneio = conjunto fechado de jogos por temporada (busca por season). Liga
+    # regular = False (jogos do dia). Mantido genérico p/ copas futuras.
     tournament: bool = False
 
     def has(self, feature: str) -> bool:
@@ -48,21 +49,12 @@ def _registry() -> dict[str, CompetitionConfig]:
             odds_sport_keys=config.ODDS_SPORT_KEYS,
             features=[],
         ),
-        WORLD_CUP: CompetitionConfig(
-            key=WORLD_CUP,
-            label="Copa do Mundo",
-            league_ids=[config.WORLD_CUP_LEAGUE_ID],
-            season=config.WORLD_CUP_SEASON,
-            odds_sport_keys=[config.WORLD_CUP_ODDS_SPORT_KEY],
-            features=["groups", "bracket", "outrights"],
-            tournament=True,
-        ),
     }
 
 
 def normalize(context: str | None) -> str:
-    """Devolve um contexto válido; desconhecido/None → geral."""
-    if context and context.strip().lower() in (GENERAL, WORLD_CUP):
+    """Devolve um contexto válido; qualquer coisa desconhecida → geral."""
+    if context and context.strip().lower() in _registry():
         return context.strip().lower()
     return GENERAL
 
