@@ -1524,18 +1524,22 @@ class FootballDataService:
         return [front_mappers.prop_to_out(pk, m) for pk in picks]
 
     def props(self, *, context: str = "general", limit: int = 40,
-              max_matches: int = 6):
+              max_matches: int = 6, league_id: Optional[int] = None):
         """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
-        (o caro é o elenco/temporada, já cacheado por time/jogador)."""
+        (o caro é o elenco/temporada, já cacheado por time/jogador). `league_id`
+        filtra por liga (feed caro → filtro no servidor, não só no cliente)."""
         # ":n6" = props de cartão (BR) + pool com zagueiros.
-        key = f"{_CACHE_V}:propsfeed:n6:{context}:{limit}:{max_matches}"
+        key = f"{_CACHE_V}:propsfeed:n6:{context}:{league_id or 'all'}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]
 
         # Props são pré-jogo → só partidas que ainda não começaram.
-        matches = self._upcoming_matches(context, only_future=True)[:max_matches]
+        matches = self._upcoming_matches(context, only_future=True)
+        if league_id:
+            matches = [m for m in matches if m.league_id == league_id]
+        matches = matches[:max_matches]
         out: list[RecommendationOut] = []
         for m in matches:
             try:

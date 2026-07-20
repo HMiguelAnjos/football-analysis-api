@@ -436,10 +436,12 @@ def match_props(match_id: int):
 
 
 @app.get("/football/props", response_model=list[RecommendationOut])
-def props_feed(limit: int = Query(40, ge=1, le=100)):
-    """Feed global de player props (artilheiro, chutes no gol) dos próximos jogos."""
+def props_feed(limit: int = Query(40, ge=1, le=100),
+               league_id: int | None = Query(None)):
+    """Feed global de player props (artilheiro, chutes no gol) dos próximos jogos.
+    `league_id` filtra por liga (feed caro → filtro no servidor)."""
     try:
-        return data_service.props(limit=limit)
+        return data_service.props(limit=limit, league_id=league_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("props feed falhou: %s", exc)
         return []
