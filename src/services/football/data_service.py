@@ -1453,8 +1453,8 @@ class FootballDataService:
         competição (essencial pro cartão: amarelo de Copa não conta pra
         suspensão do Brasileirão). Cacheado por time+season+liga."""
         season = season or config.CURRENT_SEASON
-        # ":n6" = pool por liga (amarelos só da competição p/ pendurado correto).
-        key = f"{_CACHE_V}:squadpool:n6:{context}:{team_id}:{season}:{league_id or 'all'}"
+        # ":n7" = filtra pelo elenco ATUAL (remove transferidos, ex.: Hulk).
+        key = f"{_CACHE_V}:squadpool:n7:{context}:{team_id}:{season}:{league_id or 'all'}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
@@ -1470,6 +1470,18 @@ class FootballDataService:
             except Exception:  # noqa: BLE001
                 logger.warning("props: falha buscando elenco do time %s", team_id)
                 squad = []
+            # Remove quem SAIU do clube: o lote vem de "quem jogou na temporada"
+            # e inclui transferidos (ex.: Hulk). Intersecta com o elenco ATUAL
+            # (/players/squads). Se o elenco atual falhar, não filtra (degrada).
+            current = getattr(self._football(context), "get_squad", None)
+            squad_ids: set[int] = set()
+            if current is not None:
+                try:
+                    squad_ids = {int(s.player_id) for s in (current(team_id) or [])}
+                except Exception:  # noqa: BLE001
+                    squad_ids = set()
+            if squad_ids:
+                squad = [s for s in squad if int(s.player_id) in squad_ids]
             # Só posições ofensivas com jogos na temporada (dado real p/ props).
             relevant = [s for s in squad
                         if s.position in self._PROP_POSITIONS and s.appearances > 0]
@@ -1644,8 +1656,8 @@ class FootballDataService:
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador). `league_id`
         filtra por liga (feed caro → filtro no servidor, não só no cliente)."""
-        # ":n10" = razão do cartão diz "2 amarelos no campeonato" explícito.
-        key = f"{_CACHE_V}:propsfeed:n10:{context}:{league_id or 'all'}:{limit}:{max_matches}"
+        # ":n11" = flag "Risco de suspensão" + boost do pendurado; pool sem Hulk.
+        key = f"{_CACHE_V}:propsfeed:n11:{context}:{league_id or 'all'}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]

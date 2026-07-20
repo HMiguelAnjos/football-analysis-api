@@ -134,11 +134,19 @@ def test_card_prop_differentiates_risk_vs_strategic():
     assert card.tag == "Gancho estratégico"
     assert "Palmeiras" in card.recommendation_reason
 
-    # Sem janela (mesmo perto de suspender) → risco puro.
-    risk = generate_player_props(
+    # Pendurado SEM janela estratégica → flag de risco de suspensão.
+    susp = generate_player_props(
         match=match, home_form=home, away_form=away,
         home_players=[booker], away_players=[], include_cards=True,
         home_card_ctx={"strategic": False, "next_opp": "Palmeiras"})
+    assert next(p for p in susp if p.market == "player_cards").tag == "Risco de suspensão"
+
+    # Jogador faltoso mas NÃO pendurado (1 amarelo) → risco de cartão puro.
+    hothead = PlayerSchema(id=88, name="Brigão", team_id=1, appearances=8,
+                           yellow_cards=4, position="Midfielder")   # 4%3==1, não pendurado
+    risk = generate_player_props(
+        match=match, home_form=home, away_form=away,
+        home_players=[hothead], away_players=[], include_cards=True)
     assert next(p for p in risk if p.market == "player_cards").tag == "Risco de cartão"
 
     # include_cards=False → nenhuma prop de cartão.
