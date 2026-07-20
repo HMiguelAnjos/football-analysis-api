@@ -81,8 +81,10 @@ class FootballDataService:
         if cached is not None:
             return [serde.match_from_dict(d) for d in cached]
         matches = self._football().get_matches_by_date(date) or []
-        self._disk.set(key, [serde.match_to_dict(m) for m in matches],
-                       config.MATCHES_CACHE_TTL)
+        # Data futura (sem jogo ao vivo) → TTL longo; hoje/passado → curto, pra
+        # não segurar placar ao vivo. Reduz a repetição da varredura de 3 dias.
+        ttl = config.FIXTURES_FUTURE_TTL if date > self.today_str() else config.MATCHES_CACHE_TTL
+        self._disk.set(key, [serde.match_to_dict(m) for m in matches], ttl)
         return matches
 
     def match_domain(self, match_id: int, context: str = "general") -> Optional[Match]:

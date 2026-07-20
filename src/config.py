@@ -173,6 +173,11 @@ CACHE_DIR: str = os.getenv("CACHE_DIR", "/tmp")
 # TTL (segundos) do cache de jogos do dia / stats. Dados de futebol mudam
 # devagar fora do jogo ao vivo.
 MATCHES_CACHE_TTL: int = int(os.getenv("MATCHES_CACHE_TTL", "900"))      # 15 min
+# Fixtures de datas FUTURAS não têm jogo ao vivo → cache longo (a grade muda
+# pouco: horário e, raramente, adiamento). Hoje/passado seguem no TTL curto
+# acima pra o placar ao vivo não ficar velho. Corta as buscas repetidas da
+# janela de 3 dias (feed pré-jogo) no gasto da api-football.
+FIXTURES_FUTURE_TTL: int = int(os.getenv("FIXTURES_FUTURE_TTL", str(6 * 3600)))  # 6 h
 STATS_CACHE_TTL: int = int(os.getenv("STATS_CACHE_TTL", str(6 * 3600)))  # 6 h
 # TTL do 1x2 inline em lote (sport_odds bulk, barato).
 ODDS_CACHE_TTL: int = int(os.getenv("ODDS_CACHE_TTL", "120"))
