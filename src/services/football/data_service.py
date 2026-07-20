@@ -638,6 +638,7 @@ class FootballDataService:
         return selection
 
     def opportunities(self, *, context: str = "general", limit: int = 30,
+                      league_id: Optional[int] = None,
                       min_edge: Optional[float] = None, min_odd: Optional[float] = None,
                       max_odd: Optional[float] = None):
         """Recomendações PRÉ-JOGO — 1X2, over/under e BTTS que o modelo julga
@@ -645,9 +646,20 @@ class FootballDataService:
 
         Funciona COM ou SEM odds: a odd é só informação extra. Sem The Odds API,
         recomenda puramente pela previsão do modelo (foco em confiança, não em
-        'valor de mercado'). Só jogos que ainda não começaram.
+        'valor de mercado'). Só jogos que ainda não começaram. `league_id` filtra
+        por liga (o feed é caro → filtrar no servidor, não só no cliente).
         """
         from src.providers.base import TeamForm
+
+        # Cache de topo (pré-jogo muda pouco): sem ele o feed recomputava todos os
+        # jogos futuros a cada request — a lentidão relatada. Só no caminho padrão
+        # (sem overrides de odds), que é o do endpoint.
+        use_cache = min_edge is None and min_odd is None and max_odd is None
+        ck = f"oppfeed:{context}:{league_id or 'all'}"
+        if use_cache:
+            cached = self._odds_cache.get(ck)
+            if cached is not None:
+                return cached[:limit]
 
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
@@ -658,6 +670,8 @@ class FootballDataService:
                  "first_half_goal", "first_30_goal", "corners", "cards"}
 
         matches = self._upcoming_matches(context, only_future=True)
+        if league_id:
+            matches = [m for m in matches if m.league_id == league_id]
         out = []
         for m in matches:
             rows = self.match_markets(m.id, context=context)
@@ -703,6 +717,8 @@ class FootballDataService:
                     break
             out.extend(capped)
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
+        if use_cache:
+            self._odds_cache.set(ck, out, config.LIVE_FEED_TTL * 8)
         return out[:limit]
 
     def analysis_opportunities(self, *, context: str = "general", limit: int = 30,

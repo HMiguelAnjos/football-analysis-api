@@ -553,10 +553,12 @@ def recommendations_active(
 
 
 @app.get("/football/recommendations/opportunities", response_model=list[RecommendationOut])
-def recommendations_opportunities(limit: int = Query(30, ge=1, le=100)):
-    """Melhores apostas de valor (1X2) dos jogos próximos — ao vivo, sem banco."""
+def recommendations_opportunities(limit: int = Query(30, ge=1, le=100),
+                                  league_id: int | None = Query(None)):
+    """Melhores apostas dos jogos próximos — ao vivo, sem banco. `league_id`
+    filtra por liga (feed caro → filtro no servidor)."""
     try:
-        return data_service.opportunities(limit=limit)
+        return data_service.opportunities(limit=limit, league_id=league_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("opportunities falhou: %s", exc)
         return []
