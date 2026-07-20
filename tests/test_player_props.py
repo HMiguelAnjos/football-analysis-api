@@ -114,3 +114,35 @@ def test_confidence_first_picks_are_settleable_codes():
         assert p.market in {"1x2", "double_chance", "over_under", "btts"}
         assert 0.0 <= p.model_probability <= 1.0
         assert p.confidence_score >= 60.0  # respeita o piso MIN_PICK_PROB
+
+
+def test_card_prop_differentiates_risk_vs_strategic():
+    match = _match()
+    home = TeamForm(team_id=1, matches_played=10, goals_for=1.4, goals_against=1.2)
+    away = TeamForm(team_id=2, matches_played=10, goals_for=1.3, goals_against=1.3)
+    # Zagueiro faltoso, a 1 da suspensão (regra 3): 5 % 3 == 2. Taxa 0.625/jogo
+    # passa o piso de prob do mercado (0.30).
+    booker = PlayerSchema(id=77, name="Zagueiro", team_id=1, appearances=8,
+                          yellow_cards=5, position="Defender")
+
+    # Janela estratégica ativa (jogo fácil agora → difícil depois) → "gancho".
+    strat = generate_player_props(
+        match=match, home_form=home, away_form=away,
+        home_players=[booker], away_players=[], include_cards=True,
+        home_card_ctx={"strategic": True, "next_opp": "Palmeiras"})
+    card = next(p for p in strat if p.market == "player_cards")
+    assert card.tag == "Gancho estratégico"
+    assert "Palmeiras" in card.recommendation_reason
+
+    # Sem janela (mesmo perto de suspender) → risco puro.
+    risk = generate_player_props(
+        match=match, home_form=home, away_form=away,
+        home_players=[booker], away_players=[], include_cards=True,
+        home_card_ctx={"strategic": False, "next_opp": "Palmeiras"})
+    assert next(p for p in risk if p.market == "player_cards").tag == "Risco de cartão"
+
+    # include_cards=False → nenhuma prop de cartão.
+    none = generate_player_props(
+        match=match, home_form=home, away_form=away,
+        home_players=[booker], away_players=[])
+    assert not any(p.market == "player_cards" for p in none)

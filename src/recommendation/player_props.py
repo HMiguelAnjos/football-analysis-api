@@ -63,6 +63,7 @@ class PropPick:
     fair_odd: float
     confidence_score: float
     recommendation_reason: str
+    tag: Optional[str] = None      # rótulo curto (ex.: cartão: risco vs gancho)
 
 
 def _scaler(team_lambda: float, team_avg_goals: float) -> float:
@@ -239,9 +240,15 @@ def _tackles_props(players: list[PlayerSchema], team: str,
 SUSPENSION_YELLOWS = 3
 
 
+# Tags que diferenciam POR QUE o cartão é recomendado (pedido do usuário).
+CARD_TAG_RISK = "Risco de cartão"          # base: taxa alta × intensidade do jogo
+CARD_TAG_STRATEGIC = "Gancho estratégico"  # 2 amarelos + jogo fácil antes do difícil
+
+
 def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
                opp_attack_scaler: float, opp: str,
-               *, near_suspension: bool = False) -> Optional[PropPick]:
+               *, near_suspension: bool = False, strategic: bool = False,
+               next_opp: Optional[str] = None, yellows: int = 0) -> Optional[PropPick]:
     # Cartão sobe com a intensidade defensiva do jogo: quanto mais o adversário
     # ataca, mais o jogador defende/falta → mais amarelo. Ajuste SUAVE (como
     # desarme) pra projeção ficar perto da taxa real do jogador.
@@ -251,7 +258,26 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
     prob = 1.0 - poisson_pmf(0, lam)          # P(≥1 amarelo)
     if prob < MIN_PROB["player_cards"]:
         return None
-    susp = " · a 1 amarelo da suspensão (aprox.)" if near_suspension else ""
+    # DOIS motivos distintos:
+    #  (A) risco puro — a taxa do jogador × o jogo já pedem cartão;
+    #  (B) gancho estratégico — está a 1 da suspensão E o jogo de agora é mais
+    #      fácil que o próximo (vale "queimar" o amarelo agora e cumprir o gancho
+    #      antes do jogo difícil). Requer a janela de dificuldade (strategic).
+    if strategic:
+        tag = CARD_TAG_STRATEGIC
+        nxt = f" antes de enfrentar {next_opp}" if next_opp else " antes de um jogo mais difícil"
+        reason = (
+            f"{player.name} tem {yellows} amarelos (a 1 da suspensão) e pega um jogo "
+            f"mais fácil agora{nxt} — cenário de cumprir o gancho já. "
+            f"Leva {yellows_pg:.2f} amarelo/jogo; modelo: {prob*100:.0f}% de levar cartão."
+        )
+    else:
+        tag = CARD_TAG_RISK
+        susp = " (a 1 da suspensão)" if near_suspension else ""
+        reason = (
+            f"{player.name} leva {yellows_pg:.2f} amarelo/jogo{susp}; {opp}. "
+            f"Modelo: {prob*100:.0f}% de levar cartão."
+        )
     return PropPick(
         player_name=player.name, team=team, number=getattr(player, "number", None),
         market="player_cards",
@@ -259,19 +285,20 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
         line=None, projection=round(lam, 2), model_probability=round(prob, 4),
         fair_odd=round(1 / prob, 2) if prob > 0 else 0.0,
         confidence_score=round(min(prob, 0.97) * 100, 1),
-        recommendation_reason=(
-            f"{player.name} leva {yellows_pg:.2f} amarelo/jogo; {opp}{susp}. "
-            f"Modelo: {prob*100:.0f}% de levar cartão."
-        ),
+        recommendation_reason=reason, tag=tag,
     )
 
 
 def _cards_props(players: list[PlayerSchema], team: str,
-                 opp_attack_scaler: float) -> list[PropPick]:
+                 opp_attack_scaler: float,
+                 card_ctx: Optional[dict] = None) -> list[PropPick]:
     """Cartão de jogador (só ligas BR): ranqueia pelos mais faltosos (amarelos/
-    jogo) — inclui zagueiros/volantes. Marca 'perto de suspender' quando o total
-    de amarelos está a 1 do limiar (aproximado, ver SUSPENSION_YELLOWS)."""
+    jogo) — inclui zagueiros/volantes. `card_ctx` = {"strategic": bool,
+    "next_opp": str} traz a janela de dificuldade (jogo fácil→difícil) pra marcar
+    o 'gancho estratégico' quando o jogador está a 1 da suspensão."""
     opp = _tackle_opp_label(opp_attack_scaler)      # mesma leitura de intensidade
+    strategic_window = bool(card_ctx and card_ctx.get("strategic"))
+    next_opp = (card_ctx or {}).get("next_opp")
     picks: list[PropPick] = []
     ranked = sorted(players,
                     key=lambda x: _per_game(x.yellow_cards or 0, x.appearances),
@@ -280,7 +307,9 @@ def _cards_props(players: list[PlayerSchema], team: str,
         yc = p.yellow_cards or 0
         near = yc > 0 and (yc % SUSPENSION_YELLOWS == SUSPENSION_YELLOWS - 1)
         pick = _card_pick(p, team, _per_game(yc, p.appearances),
-                          opp_attack_scaler, opp, near_suspension=near)
+                          opp_attack_scaler, opp, near_suspension=near,
+                          strategic=(near and strategic_window),
+                          next_opp=next_opp, yellows=yc)
         if pick:
             picks.append(pick)
     return picks
@@ -294,6 +323,8 @@ def generate_player_props(
     home_players: list[PlayerSchema],
     away_players: list[PlayerSchema],
     include_cards: bool = False,
+    home_card_ctx: Optional[dict] = None,
+    away_card_ctx: Optional[dict] = None,
 ) -> list[PropPick]:
     """Player props recomendadas pro jogo, projetando a stat de cada jogador
     ajustada pela força do adversário (ataque para finalizações/gols; ataque do
@@ -308,7 +339,7 @@ def generate_player_props(
     picks += _tackles_props(away_players, match.away_team.name, sh)
     # Cartões (só ligas BR): mesma leitura de intensidade dos desarmes.
     if include_cards:
-        picks += _cards_props(home_players, match.home_team.name, sa)
-        picks += _cards_props(away_players, match.away_team.name, sh)
+        picks += _cards_props(home_players, match.home_team.name, sa, home_card_ctx)
+        picks += _cards_props(away_players, match.away_team.name, sh, away_card_ctx)
     picks.sort(key=lambda x: x.model_probability, reverse=True)
     return picks

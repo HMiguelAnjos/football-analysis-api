@@ -105,6 +105,7 @@ def prop_to_out(pick, match) -> RecommendationOut:
         reason=pick.recommendation_reason, bookmaker=None, created_at="",
         stage=match.stage, group=match.group, kickoff=_iso(match.utc_kickoff),
         team=pick.team, player_number=pick.number,
+        tag=getattr(pick, "tag", None),
     )
 
 

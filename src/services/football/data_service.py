@@ -45,6 +45,22 @@ logger = logging.getLogger(__name__)
 # antigo é ignorado em vez de servir dados no formato velho.
 _CACHE_V = "v8"  # bump: novas ligas (Série B, Libertadores, Copa do Brasil)
 
+# Nome/país amigável por liga (api-football). Duplo uso: (1) fallback pra garantir
+# que TODA liga configurada apareça no filtro mesmo se a chamada de catálogo falhar;
+# (2) rótulo claro — "Serie A · Brazil" se confundia com a Itália no dropdown.
+_LEAGUE_DISPLAY: dict[int, tuple[str, str]] = {
+    39: ("Premier League", "England"),
+    140: ("La Liga", "Spain"),
+    135: ("Serie A", "Italy"),
+    78: ("Bundesliga", "Germany"),
+    61: ("Ligue 1", "France"),
+    71: ("Brasileirão Série A", "Brazil"),
+    2: ("Champions League", "Europe"),
+    72: ("Brasileirão Série B", "Brazil"),
+    13: ("Libertadores", "América do Sul"),
+    73: ("Copa do Brasil", "Brazil"),
+}
+
 # Piso de probabilidade POR MERCADO no feed pré-jogo. Os que mais erram no ledger
 # (over/under ~56%, BTTS volátil) exigem mais confiança que o piso global. O
 # resto (dupla chance, team_total, gol cedo) usa config.MIN_PICK_PROB. Ajustável
@@ -1514,14 +1530,105 @@ class FootballDataService:
             # temporada na liga — proxy de titularidade que vale pra clube.
             return sorted(players, key=lambda p: p.appearances or 0, reverse=True)
 
+        # Ligas BR: janela estratégica do cartão (jogo fácil agora → difícil
+        # depois) por time, pra diferenciar "risco de cartão" de "gancho".
+        is_br = m.league_id in config.BRAZIL_LEAGUE_IDS
+        home_ctx = away_ctx = None
+        if is_br:
+            home_ctx, away_ctx = self._card_contexts(m, season, context)
+
         picks = generate_player_props(
             match=m, home_form=hf, away_form=af,
             home_players=pool(m.home_team.id),
             away_players=pool(m.away_team.id),
-            # Cartão só nas ligas BR (regra de suspensão por 3 amarelos mapeada).
-            include_cards=(m.league_id in config.BRAZIL_LEAGUE_IDS),
+            include_cards=is_br,     # cartão só nas ligas BR (regra de suspensão)
+            home_card_ctx=home_ctx, away_card_ctx=away_ctx,
         )
         return [front_mappers.prop_to_out(pk, m) for pk in picks]
+
+    # Margem de posições na tabela pra considerar "jogo de agora mais fácil que o
+    # próximo": adversário atual STRATEGIC_RANK_MARGIN+ posições ABAIXO do próximo.
+    _STRATEGIC_RANK_MARGIN = 4
+
+    def _standings_rank(self, league_id: Optional[int], season: int,
+                        context: str = "general") -> dict[int, int]:
+        """{team_id: posição na tabela} da liga. Cache longo. {} se indisponível."""
+        if not league_id:
+            return {}
+        key = f"{_CACHE_V}:standrank:r2:{context}:{league_id}:{season}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return {int(k): int(v) for k, v in cached.items()}
+        ranks: dict[int, int] = {}
+        getter = getattr(self._football(context), "get_standings", None)
+        if getter is not None:
+            try:
+                for s in getter(league_id, season) or []:
+                    tid = getattr(s.team, "id", None)
+                    if tid and s.rank:
+                        ranks[int(tid)] = int(s.rank)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("standings rank falhou (liga %s): %s", league_id, exc)
+        self._disk.set(key, ranks, config.CATALOG_CACHE_TTL)
+        return ranks
+
+    def _season_matches_cached(self, league_id: Optional[int], season: int,
+                               context: str = "general") -> list[Match]:
+        """Todos os jogos da temporada da liga (1 chamada, cache 6h). Base pra
+        achar o PRÓXIMO adversário de cada time sem chamada por time."""
+        if not league_id:
+            return []
+        key = f"{_CACHE_V}:seasonmatches:{context}:{league_id}:{season}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return [serde.match_from_dict(d) for d in cached]
+        getter = getattr(self._football(context), "get_season_matches", None)
+        matches: list[Match] = []
+        if getter is not None:
+            try:
+                matches = getter(league_id, season) or []
+            except Exception:  # noqa: BLE001
+                logger.warning("season matches falhou (liga %s)", league_id)
+        self._disk.set(key, [serde.match_to_dict(mm) for mm in matches],
+                       config.STATS_CACHE_TTL)
+        return matches
+
+    @staticmethod
+    def _next_opponent(team_id: int, current: Match, season_matches: list[Match]):
+        """(opp_id, opp_name) do PRÓXIMO jogo do time depois do atual, ou
+        (None, None). Ignora finalizados e o próprio jogo atual."""
+        cur_ko = current.utc_kickoff
+        cands = [
+            mm for mm in season_matches
+            if mm.id != current.id and mm.status != "finished"
+            and team_id in (mm.home_team.id, mm.away_team.id)
+            and not (cur_ko is not None and mm.utc_kickoff is not None
+                     and mm.utc_kickoff <= cur_ko)
+        ]
+        if not cands:
+            return None, None
+        cands.sort(key=lambda x: (x.utc_kickoff is None, x.utc_kickoff))
+        nxt = cands[0]
+        return ((nxt.away_team.id, nxt.away_team.name) if nxt.home_team.id == team_id
+                else (nxt.home_team.id, nxt.home_team.name))
+
+    def _card_contexts(self, m: Match, season: int, context: str):
+        """Janela estratégica do cartão pros dois times: {"strategic","next_opp"}.
+        strategic = adversário de AGORA está bem abaixo (na tabela) do PRÓXIMO
+        adversário do time — jogo fácil agora, difícil depois."""
+        ranks = self._standings_rank(m.league_id, season, context)
+        smatches = self._season_matches_cached(m.league_id, season, context)
+
+        def ctx(team_id: int, opp_now_id: int) -> dict:
+            nxt_id, nxt_name = self._next_opponent(team_id, m, smatches)
+            if not nxt_id:
+                return {"strategic": False, "next_opp": None}
+            r_now, r_next = ranks.get(opp_now_id), ranks.get(nxt_id)
+            strategic = bool(r_now and r_next
+                             and (r_now - r_next) >= self._STRATEGIC_RANK_MARGIN)
+            return {"strategic": strategic, "next_opp": nxt_name}
+
+        return ctx(m.home_team.id, m.away_team.id), ctx(m.away_team.id, m.home_team.id)
 
     def props(self, *, context: str = "general", limit: int = 40,
               max_matches: int = 6, league_id: Optional[int] = None):
@@ -1529,8 +1636,8 @@ class FootballDataService:
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador). `league_id`
         filtra por liga (feed caro → filtro no servidor, não só no cliente)."""
-        # ":n6" = props de cartão (BR) + pool com zagueiros.
-        key = f"{_CACHE_V}:propsfeed:n6:{context}:{league_id or 'all'}:{limit}:{max_matches}"
+        # ":n7" = cartão diferencia risco × gancho estratégico (tag/razão novos).
+        key = f"{_CACHE_V}:propsfeed:n7:{context}:{league_id or 'all'}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]
@@ -1563,6 +1670,22 @@ class FootballDataService:
                        for lg in provider_leagues]
             if catalog:
                 self._disk.set(key, catalog, config.CATALOG_CACHE_TTL)
+        # Nome amigável + GARANTE toda liga configurada, mesmo se a chamada de
+        # catálogo (1/liga) falhou no cold start (senão a liga sumia do filtro
+        # por 24h — foi o "Série A brasileira faltando"). Ordena por config.
+        by_id = {d["id"]: d for d in catalog}
+        normalized: list[dict] = []
+        for lid in config.DEFAULT_LEAGUE_IDS:
+            disp = _LEAGUE_DISPLAY.get(lid)
+            d = by_id.get(lid)
+            if d is None and disp is None:
+                continue
+            if d is None:                       # api não devolveu → fallback
+                d = LeagueSchema(id=lid, name=disp[0], country=disp[1]).model_dump(mode="json")
+            elif disp:                          # rótulo claro (ex.: Brasileirão)
+                d = {**d, "name": disp[0], "country": disp[1]}
+            normalized.append(d)
+        catalog = normalized
         # matches_today por liga (reusa o cache de jogos do dia, 1 chamada).
         try:
             today = self.matches_by_date_domain(self.today_str())
