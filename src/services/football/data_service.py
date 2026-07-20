@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # Prefixo de versão das chaves do cache em disco. Bumpe quando o FORMATO dos
 # dados cacheados mudar (ex.: novo campo em TeamForm/Match) — assim o cache
 # antigo é ignorado em vez de servir dados no formato velho.
-_CACHE_V = "v7"  # bump: temporada por-liga nos props + janela de 3 dias no feed
+_CACHE_V = "v8"  # bump: novas ligas (Série B, Libertadores, Copa do Brasil)
 
 # Piso de probabilidade POR MERCADO no feed pré-jogo. Os que mais erram no ledger
 # (over/under ~56%, BTTS volátil) exigem mais confiança que o piso global. O

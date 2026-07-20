@@ -72,10 +72,13 @@ API_FOOTBALL_HOST: str = os.getenv(
 )
 
 # Ligas acompanhadas por padrão (IDs da api-football). Default: principais
-# ligas europeias + Brasileirão. CSV de inteiros.
+# ligas europeias + competições brasileiras + continentais. CSV de inteiros.
 #   39=Premier League, 140=La Liga, 135=Serie A, 78=Bundesliga,
-#   61=Ligue 1, 71=Brasileirão Série A, 2=Champions League.
-_leagues_raw = os.getenv("DEFAULT_LEAGUE_IDS", "39,140,135,78,61,71,2")
+#   61=Ligue 1, 71=Brasileirão Série A, 2=Champions League,
+#   72=Brasileirão Série B, 13=CONMEBOL Libertadores, 73=Copa do Brasil.
+# 13 e 73 são COPAS (poucos jogos por time na competição → a forma pode ficar
+# rasa; o modelo cai em médias da liga quando a amostra é pequena).
+_leagues_raw = os.getenv("DEFAULT_LEAGUE_IDS", "39,140,135,78,61,71,2,72,13,73")
 DEFAULT_LEAGUE_IDS: list[int] = [
     int(x) for x in _leagues_raw.split(",") if x.strip().isdigit()
 ]
