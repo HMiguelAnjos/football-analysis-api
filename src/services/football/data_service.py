@@ -254,6 +254,27 @@ class FootballDataService:
             out.append(conv.match_to_schema(m, main=main, context=context))
         return d, out
 
+    def matches_upcoming(self, *, league_id: Optional[int] = None,
+                         status: Optional[str] = None, context: str = "general",
+                         limit: int = 40) -> list[MatchSchema]:
+        """Próximos jogos (hoje + 3 dias) das ligas acompanhadas, ordenados por
+        horário. Preenche as telas quando NÃO há jogo hoje — a lista por data
+        (`matches`) mostra só o dia pedido e fica vazia num dia sem partida."""
+        domain = self._upcoming_matches(context, only_future=False)
+        if league_id:
+            domain = [m for m in domain if m.league_id == league_id]
+        if status:
+            domain = [m for m in domain if m.status == status]
+        domain.sort(key=lambda m: (m.utc_kickoff is None, m.utc_kickoff))
+        domain = domain[:limit]
+        h2h = self._h2h_for(f"{context}:upcoming", domain, context)
+        out: list[MatchSchema] = []
+        for m in domain:
+            odds = h2h.get(m.id)
+            main = MatchMainOddsSchema(**odds) if odds else None
+            out.append(conv.match_to_schema(m, main=main, context=context))
+        return out
+
     def get_match(self, match_id: int, context: str = "general") -> Optional[MatchSchema]:
         m = self.match_domain(match_id, context=context)
         return conv.match_to_schema(m, context=context) if m else None
@@ -574,8 +595,10 @@ class FootballDataService:
             for m in self.matches_by_date_domain(date_str):
                 if m.league_id not in allowed or m.id in seen:
                     continue
-                if m.status in ("finished", "live"):
+                if m.status == "finished":
                     continue
+                if only_future and m.status == "live":
+                    continue            # feeds pré-jogo não recomendam jogo em andamento
                 if m.utc_kickoff is None:
                     # Sem horário não dá pra garantir futuro → fora do modo estrito.
                     if not only_future:

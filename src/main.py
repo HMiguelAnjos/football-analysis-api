@@ -384,6 +384,23 @@ def matches_list(
     return MatchListResponse(date=d, matches=matches)
 
 
+@app.get("/football/matches/upcoming", response_model=MatchListResponse)
+def matches_upcoming(
+    league_id: int | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(40, ge=1, le=100),
+):
+    """Próximos jogos (hoje + 3 dias) — preenche as telas quando não há jogo
+    hoje. Definido ANTES de /matches/{match_id} pra não cair na rota paramétrica."""
+    try:
+        matches = data_service.matches_upcoming(
+            league_id=league_id, status=status, limit=limit,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Erro ao buscar jogos: {exc}")
+    return MatchListResponse(date=data_service.today_str(), matches=matches)
+
+
 @app.get("/football/matches/{match_id}", response_model=MatchSchema)
 def match_detail(match_id: int):
     m = data_service.get_match(match_id)
