@@ -24,7 +24,7 @@ from src.recommendation.settlement import MatchResult, _norm, profit_units, sett
 # Mercados de jogador — só pra esses vale a chamada extra de stats por jogador.
 _PLAYER_MARKETS = {
     "anytime_scorer", "player_shots", "player_shots_on_target",
-    "player_assists", "player_tackles",
+    "player_assists", "player_tackles", "player_cards",
 }
 from src.services import recommendation_service as rec_svc
 
@@ -80,6 +80,8 @@ def settle_finished(db: Session, data_service) -> dict:
                                 "shots_on_target": float(p.get("shots_on") or 0),
                                 "assists": float(p.get("assists") or 0),
                                 "tackles": float(p.get("tackles") or 0),
+                                # Cartão do jogador NO JOGO (amarelo + vermelho).
+                                "cards": float((p.get("yellow") or 0) + (p.get("red") or 0)),
                             }
                             for p in players if p.get("name")
                         }

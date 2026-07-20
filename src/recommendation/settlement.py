@@ -126,6 +126,14 @@ def settle(market: str, selection: str, line: Optional[float], result: MatchResu
         name = _player_name(selection)
         return HIT if _norm(name) in {_norm(s) for s in result.scorers} else MISS
 
+    if market == "player_cards":
+        # Booleano ("levar cartão"): HIT se o jogador levou ≥1 (amarelo/vermelho).
+        name = _player_name(selection)
+        stats = result.player_stats.get(_norm(name))
+        if stats is None or "cards" not in stats:
+            return VOID
+        return HIT if stats["cards"] >= 1 else MISS
+
     if market in ("player_shots", "player_shots_on_target", "player_assists",
                   "player_tackles") and line is not None:
         stat_key = {

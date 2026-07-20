@@ -94,3 +94,14 @@ def test_player_props_settle_with_player_stats():
     assert settle("anytime_scorer", "Casemiro — Marcar a qualquer momento", None, res) == "hit"
     # jogador sem stats → void (não erro).
     assert settle("player_tackles", "Fulano — Mais de 1 desarmes", 0.5, res) == "void"
+
+
+def test_player_cards_settle():
+    # "Levar cartão" é booleano (sem linha): HIT se levou ≥1 (amarelo ou vermelho).
+    res = MatchResult(1, 1, player_stats={
+        "kanu": {"cards": 1.0}, "lyanco": {"cards": 0.0},
+    })
+    assert settle("player_cards", "Kanu — Levar cartão", None, res) == "hit"
+    assert settle("player_cards", "Lyanco — Levar cartão", None, res) == "miss"
+    # jogador sem stats (ou fonte sem cartões) → void, não erro.
+    assert settle("player_cards", "Fulano — Levar cartão", None, res) == "void"
