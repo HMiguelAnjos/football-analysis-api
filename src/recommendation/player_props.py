@@ -263,10 +263,10 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
     floor = CARD_STRATEGIC_MIN_PROB if strategic else MIN_PROB["player_cards"]
     if prob < floor:
         return None
-    # near_suspension = acúmulo do CICLO em (limiar-1), ou seja 2 de 3 amarelos
-    # (amarelos_da_temporada % 3 == 2). Mostramos "2 de 3", nunca o total da
-    # temporada — o total infla por ganchos já cumpridos e confunde.
-    accrual = f"{SUSPENSION_YELLOWS - 1} de {SUSPENSION_YELLOWS} amarelos"
+    # near_suspension = acúmulo do CICLO em (limiar-1) amarelos NO CAMPEONATO
+    # (amarelos_da_liga % 3 == 2). Mostramos "2 amarelos no campeonato", nunca o
+    # total geral — amarelo de copa não conta pra suspensão e confundiria.
+    accrual = f"{SUSPENSION_YELLOWS - 1} amarelos no campeonato"
     # DOIS motivos distintos:
     #  (A) risco puro — a taxa do jogador × o jogo já pedem cartão;
     #  (B) gancho estratégico — está a 1 da suspensão E o jogo de agora é mais
@@ -276,13 +276,13 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
         tag = CARD_TAG_STRATEGIC
         nxt = f" antes de enfrentar {next_opp}" if next_opp else " antes de um jogo mais difícil"
         reason = (
-            f"{player.name} está a 1 amarelo da suspensão ({accrual} no acúmulo) e pega "
-            f"um jogo mais fácil agora{nxt} — vale cumprir o gancho já. "
+            f"{player.name} está com {accrual} (a 1 da suspensão) e pega um jogo "
+            f"mais fácil agora{nxt} — vale cumprir o gancho já. "
             f"Leva {yellows_pg:.2f} amarelo/jogo; modelo: {prob*100:.0f}% de levar cartão."
         )
     else:
         tag = CARD_TAG_RISK
-        susp = f" (a 1 da suspensão, {accrual})" if near_suspension else ""
+        susp = f" (está com {accrual}, a 1 da suspensão)" if near_suspension else ""
         reason = (
             f"{player.name} leva {yellows_pg:.2f} amarelo/jogo{susp}; {opp}. "
             f"Modelo: {prob*100:.0f}% de levar cartão."
