@@ -553,6 +553,28 @@ class ApiFootballProvider:
                 ))
         return out
 
+    def get_team_player_stats(self, team_id: int, season: int,
+                              max_pages: int = 3) -> list[PlayerSeasonStats]:
+        """Elenco COM stats da temporada em LOTE (/players?team&season, paginado).
+        Substitui o N+1 do props (get_squad + get_player_season por jogador):
+        ~1-2 requests por time em vez de ~16. O data_service cacheia 24h."""
+        out: list[PlayerSeasonStats] = []
+        page = 1
+        while page <= max_pages:
+            data = self._client.get("players", {
+                "team": team_id, "season": season, "page": page,
+            })
+            for block in (data.get("response") or []):
+                p = self._parse_player_block(block, default_team=team_id)
+                if p is not None:
+                    out.append(p)
+            paging = data.get("paging") or {}
+            total = int(paging.get("total", 1) or 1)
+            if page >= total:
+                break
+            page += 1
+        return out
+
     def get_player_season(self, player_id: int, season: int,
                           national_team_id: Optional[int] = None) -> Optional[PlayerSeasonStats]:
         """Stats de UM jogador na temporada, AGREGADAS por todas as competições

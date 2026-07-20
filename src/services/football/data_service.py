@@ -1425,71 +1425,36 @@ class FootballDataService:
     # (ex.: De Bruyne). generate_player_props já pega só o top N por chute/gol.
     _SQUAD_ENRICH_CAP = 16
 
-    def _player_season_cached(self, player_id: int, season: int, context: str,
-                              national_team_id: Optional[int] = None):
-        """Stats de temporada de um jogador (clube+seleção agregadas), cacheadas
-        em disco por jogador. national_team_id → soma jogos pela seleção."""
-        import dataclasses
-
-        from src.providers.base import PlayerSeasonStats
-
-        # ":n2" = inclui nt_appearances (jogos pela seleção).
-        key = f"{_CACHE_V}:pseason:n2:{player_id}:{season}:{national_team_id or 0}"
-        cached = self._disk.get(key)
-        if cached is not None:
-            return PlayerSeasonStats(**cached) if cached else None
-        getter = getattr(self._football(context), "get_player_season", None)
-        if getter is None:
-            return None
-        stats = None
-        try:
-            stats = getter(player_id, season, national_team_id)
-        except TypeError:        # provider sem suporte a national_team_id
-            try:
-                stats = getter(player_id, season)
-            except Exception:    # noqa: BLE001
-                logger.warning("props: falha buscando stats do jogador %s", player_id)
-        except Exception:  # noqa: BLE001 — jogador problemático não derruba o pool
-            logger.warning("props: falha buscando stats do jogador %s", player_id)
-        # Cacheia inclusive o vazio ({}) pra não re-bater no mesmo id sem dado.
-        self._disk.set(key, dataclasses.asdict(stats) if stats else {},
-                       config.CATALOG_CACHE_TTL)
-        return stats
-
     def team_player_pool(self, team_id: int, context: str = "general",
                          season: Optional[int] = None) -> list[PlayerSchema]:
         """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção).
         `season` = temporada atual da liga do time (Brasileirão=2026, Europa=
         2025); None cai na season do contexto. Cacheado por time+season."""
         season = season or config.CURRENT_SEASON
-        # ":n3" = inclui nt_appearances (jogos pela seleção) no pool.
-        key = f"{_CACHE_V}:squadpool:n3:{context}:{team_id}:{season}"
+        # ":n4" = busca em lote (get_team_player_stats) em vez do N+1 por jogador.
+        key = f"{_CACHE_V}:squadpool:n4:{context}:{team_id}:{season}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
 
-        get_squad = getattr(self._football(context), "get_squad", None)
+        # Busca em LOTE (1-2 requests/time) em vez do N+1 antigo (get_squad +
+        # get_player_season por jogador, ~16 requests). /players?team&season já
+        # traz o elenco COM stats da temporada.
+        bulk = getattr(self._football(context), "get_team_player_stats", None)
         pool: list[PlayerSchema] = []
-        if get_squad is not None:
+        if bulk is not None:
             try:
-                squad = get_squad(team_id) or []
+                squad = bulk(team_id, season) or []
             except Exception:  # noqa: BLE001
                 logger.warning("props: falha buscando elenco do time %s", team_id)
                 squad = []
-            relevant = [s for s in squad if s.position in self._PROP_POSITIONS]
-            # O elenco vem ordenado por posição (GK→DEF→MID→ATT), com os
-            # atacantes no FIM. Sem priorizar, o teto cortava justamente os
-            # finalizadores (Salah idx 25). Atacantes primeiro, meias depois.
+            # Só posições ofensivas com jogos na temporada (dado real p/ props).
+            relevant = [s for s in squad
+                        if s.position in self._PROP_POSITIONS and s.appearances > 0]
+            # Atacantes primeiro (o teto não pode cortar os finalizadores).
             relevant.sort(key=lambda s: 0 if s.position == "Attacker" else 1)
-            for sp in relevant[: self._SQUAD_ENRICH_CAP]:
-                stats = self._player_season_cached(
-                    sp.player_id, season, context,
-                    national_team_id=team_id)
-                if stats is None or stats.appearances <= 0:
-                    continue
+            for stats in relevant[: self._SQUAD_ENRICH_CAP]:
                 stats.team_id = team_id
-                stats.name = stats.name or sp.name
-                stats.number = sp.number          # nº da camisa vem do elenco
                 pool.append(conv.player_to_schema(stats))
 
         # Fallback: time que já jogou no torneio (squad indisponível/sem stats).
@@ -1558,8 +1523,8 @@ class FootballDataService:
         """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador)."""
-        # ":n4" = prioriza prováveis titulares (jogos pela seleção / escalação).
-        key = f"{_CACHE_V}:propsfeed:n4:{context}:{limit}:{max_matches}"
+        # ":n5" = pool via busca em lote (invalida feed montado do pool antigo).
+        key = f"{_CACHE_V}:propsfeed:n5:{context}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]
