@@ -37,6 +37,8 @@ MIN_PROB = {
     "anytime_scorer": 0.55,
     "player_assists": 0.45,
     "player_tackles": 0.55,
+    # Cartão é evento incomum (mesmo pro mais faltoso ~0.4/jogo) → piso menor.
+    "player_cards": 0.30,
 }
 _MARKET_LABEL = {
     "player_shots_on_target": "finalizações no gol",
@@ -44,6 +46,7 @@ _MARKET_LABEL = {
     "anytime_scorer": "marcar a qualquer momento",
     "player_assists": "assistências",
     "player_tackles": "desarmes",
+    "player_cards": "cartão",
 }
 
 
@@ -229,6 +232,60 @@ def _tackles_props(players: list[PlayerSchema], team: str,
     return picks
 
 
+# ─── Cartões (jogador) — só ligas brasileiras (regra de suspensão = 3 amarelos) ──
+# Amarelos que geram suspensão no Brasileirão. Usado só como SINAL aproximado de
+# "perto de suspender" (a api não expõe o acúmulo do ciclo; o total da temporada
+# infla por ganchos já cumpridos).
+SUSPENSION_YELLOWS = 3
+
+
+def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
+               opp_attack_scaler: float, opp: str,
+               *, near_suspension: bool = False) -> Optional[PropPick]:
+    # Cartão sobe com a intensidade defensiva do jogo: quanto mais o adversário
+    # ataca, mais o jogador defende/falta → mais amarelo. Ajuste SUAVE (como
+    # desarme) pra projeção ficar perto da taxa real do jogador.
+    lam = yellows_pg * _soften_scaler(opp_attack_scaler)
+    if lam <= 0.03:
+        return None
+    prob = 1.0 - poisson_pmf(0, lam)          # P(≥1 amarelo)
+    if prob < MIN_PROB["player_cards"]:
+        return None
+    susp = " · a 1 amarelo da suspensão (aprox.)" if near_suspension else ""
+    return PropPick(
+        player_name=player.name, team=team, number=getattr(player, "number", None),
+        market="player_cards",
+        selection=f"{player.name} — Levar cartão",
+        line=None, projection=round(lam, 2), model_probability=round(prob, 4),
+        fair_odd=round(1 / prob, 2) if prob > 0 else 0.0,
+        confidence_score=round(min(prob, 0.97) * 100, 1),
+        recommendation_reason=(
+            f"{player.name} leva {yellows_pg:.2f} amarelo/jogo; {opp}{susp}. "
+            f"Modelo: {prob*100:.0f}% de levar cartão."
+        ),
+    )
+
+
+def _cards_props(players: list[PlayerSchema], team: str,
+                 opp_attack_scaler: float) -> list[PropPick]:
+    """Cartão de jogador (só ligas BR): ranqueia pelos mais faltosos (amarelos/
+    jogo) — inclui zagueiros/volantes. Marca 'perto de suspender' quando o total
+    de amarelos está a 1 do limiar (aproximado, ver SUSPENSION_YELLOWS)."""
+    opp = _tackle_opp_label(opp_attack_scaler)      # mesma leitura de intensidade
+    picks: list[PropPick] = []
+    ranked = sorted(players,
+                    key=lambda x: _per_game(x.yellow_cards or 0, x.appearances),
+                    reverse=True)
+    for p in ranked[:TOP_N_PER_TEAM]:
+        yc = p.yellow_cards or 0
+        near = yc > 0 and (yc % SUSPENSION_YELLOWS == SUSPENSION_YELLOWS - 1)
+        pick = _card_pick(p, team, _per_game(yc, p.appearances),
+                          opp_attack_scaler, opp, near_suspension=near)
+        if pick:
+            picks.append(pick)
+    return picks
+
+
 def generate_player_props(
     *,
     match,
@@ -236,6 +293,7 @@ def generate_player_props(
     away_form: TeamForm,
     home_players: list[PlayerSchema],
     away_players: list[PlayerSchema],
+    include_cards: bool = False,
 ) -> list[PropPick]:
     """Player props recomendadas pro jogo, projetando a stat de cada jogador
     ajustada pela força do adversário (ataque para finalizações/gols; ataque do
@@ -248,5 +306,9 @@ def generate_player_props(
     # Desarmes: o time da CASA desarma o ataque do VISITANTE (escala sa) e vice-versa.
     picks += _tackles_props(home_players, match.home_team.name, sa)
     picks += _tackles_props(away_players, match.away_team.name, sh)
+    # Cartões (só ligas BR): mesma leitura de intensidade dos desarmes.
+    if include_cards:
+        picks += _cards_props(home_players, match.home_team.name, sa)
+        picks += _cards_props(away_players, match.away_team.name, sh)
     picks.sort(key=lambda x: x.model_probability, reverse=True)
     return picks

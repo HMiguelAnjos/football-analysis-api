@@ -1419,13 +1419,14 @@ class FootballDataService:
             context=context,
         )
 
-    # Posições do elenco que valem props de finalização/gol (poupa chamadas:
-    # goleiro/zagueiro raramente viram pick de chute/artilheiro).
-    _PROP_POSITIONS = ("Attacker", "Midfielder")
-    # Teto de jogadores enriquecidos por time — limita o custo de API.
-    # 16 (com atacantes priorizados) cobre todos os atacantes + meias-chave
-    # (ex.: De Bruyne). generate_player_props já pega só o top N por chute/gol.
-    _SQUAD_ENRICH_CAP = 16
+    # Posições que entram no pool de props. Inclui ZAGUEIRO por causa de desarmes
+    # e cartões (defensor é o maior desarmador/faltoso). Só goleiro fica de fora.
+    # Props de finalização/gol filtram por projeção, então zagueiro não polui.
+    _PROP_POSITIONS = ("Attacker", "Midfielder", "Defender")
+    # Teto de jogadores no pool por time. Com a busca em LOTE (1-2 requests) o
+    # enriquecimento é grátis, então o teto é só tamanho do pool: 30 cobre todos
+    # os jogadores de linha. Cada mercado pega o top N por sua stat.
+    _SQUAD_ENRICH_CAP = 30
 
     def team_player_pool(self, team_id: int, context: str = "general",
                          season: Optional[int] = None) -> list[PlayerSchema]:
@@ -1433,8 +1434,8 @@ class FootballDataService:
         `season` = temporada atual da liga do time (Brasileirão=2026, Europa=
         2025); None cai na season do contexto. Cacheado por time+season."""
         season = season or config.CURRENT_SEASON
-        # ":n4" = busca em lote (get_team_player_stats) em vez do N+1 por jogador.
-        key = f"{_CACHE_V}:squadpool:n4:{context}:{team_id}:{season}"
+        # ":n5" = pool inclui zagueiros (props de cartão/desarme).
+        key = f"{_CACHE_V}:squadpool:n5:{context}:{team_id}:{season}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
@@ -1517,6 +1518,8 @@ class FootballDataService:
             match=m, home_form=hf, away_form=af,
             home_players=pool(m.home_team.id),
             away_players=pool(m.away_team.id),
+            # Cartão só nas ligas BR (regra de suspensão por 3 amarelos mapeada).
+            include_cards=(m.league_id in config.BRAZIL_LEAGUE_IDS),
         )
         return [front_mappers.prop_to_out(pk, m) for pk in picks]
 
@@ -1525,8 +1528,8 @@ class FootballDataService:
         """Feed GLOBAL de player props dos próximos jogos (artilheiro, chutes no
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador)."""
-        # ":n5" = pool via busca em lote (invalida feed montado do pool antigo).
-        key = f"{_CACHE_V}:propsfeed:n5:{context}:{limit}:{max_matches}"
+        # ":n6" = props de cartão (BR) + pool com zagueiros.
+        key = f"{_CACHE_V}:propsfeed:n6:{context}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]

@@ -216,6 +216,7 @@ class GenerationService:
         picks = generate_player_props(
             match=match, home_form=home_form, away_form=away_form,
             home_players=hp, away_players=ap,
+            include_cards=(match.league_id in config.BRAZIL_LEAGUE_IDS),
         )
         if not persist:
             return len(picks)

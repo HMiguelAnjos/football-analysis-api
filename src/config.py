@@ -82,6 +82,14 @@ _leagues_raw = os.getenv("DEFAULT_LEAGUE_IDS", "39,140,135,78,61,71,2,72,13,73")
 DEFAULT_LEAGUE_IDS: list[int] = [
     int(x) for x in _leagues_raw.split(",") if x.strip().isdigit()
 ]
+# Ligas brasileiras (Série A/B) — regra de suspensão por acúmulo de amarelos.
+# A prop de cartão de jogador só é gerada pra elas (o limiar varia por país;
+# fora do Brasil não temos a regra mapeada). 71=Série A, 72=Série B.
+_br_raw = os.getenv("BRAZIL_LEAGUE_IDS", "71,72")
+BRAZIL_LEAGUE_IDS: list[int] = [int(x) for x in _br_raw.split(",") if x.strip().isdigit()]
+# Amarelos que geram suspensão no Brasileirão (Série A/B). Usado só como SINAL
+# aproximado de "perto de suspender" (a api não expõe o acúmulo do ciclo atual).
+CARD_SUSPENSION_YELLOWS: int = int(os.getenv("CARD_SUSPENSION_YELLOWS", "3"))
 # Temporada corrente (ano de início). Ex: 2025 = temporada 2025/26.
 CURRENT_SEASON: int = int(os.getenv("CURRENT_SEASON", "2025"))
 
