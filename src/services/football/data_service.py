@@ -1445,13 +1445,16 @@ class FootballDataService:
     _SQUAD_ENRICH_CAP = 30
 
     def team_player_pool(self, team_id: int, context: str = "general",
-                         season: Optional[int] = None) -> list[PlayerSchema]:
+                         season: Optional[int] = None,
+                         league_id: Optional[int] = None) -> list[PlayerSchema]:
         """Elenco do time com taxa de chute/gol da TEMPORADA (clube+seleção).
         `season` = temporada atual da liga do time (Brasileirão=2026, Europa=
-        2025); None cai na season do contexto. Cacheado por time+season."""
+        2025); None cai na season do contexto. `league_id` conta SÓ aquela
+        competição (essencial pro cartão: amarelo de Copa não conta pra
+        suspensão do Brasileirão). Cacheado por time+season+liga."""
         season = season or config.CURRENT_SEASON
-        # ":n5" = pool inclui zagueiros (props de cartão/desarme).
-        key = f"{_CACHE_V}:squadpool:n5:{context}:{team_id}:{season}"
+        # ":n6" = pool por liga (amarelos só da competição p/ pendurado correto).
+        key = f"{_CACHE_V}:squadpool:n6:{context}:{team_id}:{season}:{league_id or 'all'}"
         cached = self._disk.get(key)
         if cached is not None:
             return [PlayerSchema.model_validate(d) for d in cached]
@@ -1463,7 +1466,7 @@ class FootballDataService:
         pool: list[PlayerSchema] = []
         if bulk is not None:
             try:
-                squad = bulk(team_id, season) or []
+                squad = bulk(team_id, season, league_id=league_id) or []
             except Exception:  # noqa: BLE001
                 logger.warning("props: falha buscando elenco do time %s", team_id)
                 squad = []
@@ -1519,9 +1522,15 @@ class FootballDataService:
 
         starters = self._starters(match_id, context)
         season = self._league_season(m.league_id, context)
+        # Ligas BR: conta stats SÓ da competição (amarelo de Copa não conta pro
+        # pendurado do Brasileirão). Fora do Brasil mantém cross-comp (evita
+        # regredir copas com poucos jogos).
+        is_br = m.league_id in config.BRAZIL_LEAGUE_IDS
+        pool_league = m.league_id if is_br else None
 
         def pool(team_id: int):
-            players = self.team_player_pool(team_id, context, season=season)
+            players = self.team_player_pool(team_id, context, season=season,
+                                            league_id=pool_league)
             xi = starters.get(team_id)
             if xi:                                    # escalação saiu → só titulares
                 return [p for p in players if int(p.id) in xi]
@@ -1532,7 +1541,6 @@ class FootballDataService:
 
         # Ligas BR: janela estratégica do cartão (jogo fácil agora → difícil
         # depois) por time, pra diferenciar "risco de cartão" de "gancho".
-        is_br = m.league_id in config.BRAZIL_LEAGUE_IDS
         home_ctx = away_ctx = None
         if is_br:
             home_ctx, away_ctx = self._card_contexts(m, season, context)
@@ -1636,8 +1644,8 @@ class FootballDataService:
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador). `league_id`
         filtra por liga (feed caro → filtro no servidor, não só no cliente)."""
-        # ":n8" = razão do cartão mostra acúmulo do ciclo (2 de 3), não o total.
-        key = f"{_CACHE_V}:propsfeed:n8:{context}:{league_id or 'all'}:{limit}:{max_matches}"
+        # ":n9" = amarelos só da liga (pendurado correto) + gancho com piso menor.
+        key = f"{_CACHE_V}:propsfeed:n9:{context}:{league_id or 'all'}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]

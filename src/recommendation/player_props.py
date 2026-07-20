@@ -243,6 +243,10 @@ SUSPENSION_YELLOWS = 3
 # Tags que diferenciam POR QUE o cartão é recomendado (pedido do usuário).
 CARD_TAG_RISK = "Risco de cartão"          # base: taxa alta × intensidade do jogo
 CARD_TAG_STRATEGIC = "Gancho estratégico"  # 2 amarelos + jogo fácil antes do difícil
+# Piso de prob menor pro gancho estratégico: a recomendação vem do CENÁRIO
+# (queimar o amarelo no jogo fácil e cumprir o gancho antes do difícil), não só
+# da taxa do jogador. Risco puro segue no piso normal (MIN_PROB, 0.30).
+CARD_STRATEGIC_MIN_PROB = 0.15
 
 
 def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
@@ -256,7 +260,8 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
     if lam <= 0.03:
         return None
     prob = 1.0 - poisson_pmf(0, lam)          # P(≥1 amarelo)
-    if prob < MIN_PROB["player_cards"]:
+    floor = CARD_STRATEGIC_MIN_PROB if strategic else MIN_PROB["player_cards"]
+    if prob < floor:
         return None
     # near_suspension = acúmulo do CICLO em (limiar-1), ou seja 2 de 3 amarelos
     # (amarelos_da_temporada % 3 == 2). Mostramos "2 de 3", nunca o total da
@@ -303,13 +308,25 @@ def _cards_props(players: list[PlayerSchema], team: str,
     opp = _tackle_opp_label(opp_attack_scaler)      # mesma leitura de intensidade
     strategic_window = bool(card_ctx and card_ctx.get("strategic"))
     next_opp = (card_ctx or {}).get("next_opp")
-    picks: list[PropPick] = []
+
+    def _near(p: PlayerSchema) -> bool:
+        yc = p.yellow_cards or 0
+        return yc > 0 and (yc % SUSPENSION_YELLOWS == SUSPENSION_YELLOWS - 1)
+
     ranked = sorted(players,
                     key=lambda x: _per_game(x.yellow_cards or 0, x.appearances),
                     reverse=True)
-    for p in ranked[:TOP_N_PER_TEAM]:
+    # Top-N por taxa (risco puro) + TODO pendurado quando há janela estratégica
+    # (o gancho vale mesmo com taxa modesta, então não pode cair no teto).
+    candidates = list(ranked[:TOP_N_PER_TEAM])
+    if strategic_window:
+        seen = {id(p) for p in candidates}
+        candidates += [p for p in ranked if _near(p) and id(p) not in seen]
+
+    picks: list[PropPick] = []
+    for p in candidates:
         yc = p.yellow_cards or 0
-        near = yc > 0 and (yc % SUSPENSION_YELLOWS == SUSPENSION_YELLOWS - 1)
+        near = _near(p)
         pick = _card_pick(p, team, _per_game(yc, p.appearances),
                           opp_attack_scaler, opp, near_suspension=near,
                           strategic=(near and strategic_window),
