@@ -248,7 +248,7 @@ CARD_TAG_STRATEGIC = "Gancho estratégico"  # 2 amarelos + jogo fácil antes do 
 def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
                opp_attack_scaler: float, opp: str,
                *, near_suspension: bool = False, strategic: bool = False,
-               next_opp: Optional[str] = None, yellows: int = 0) -> Optional[PropPick]:
+               next_opp: Optional[str] = None) -> Optional[PropPick]:
     # Cartão sobe com a intensidade defensiva do jogo: quanto mais o adversário
     # ataca, mais o jogador defende/falta → mais amarelo. Ajuste SUAVE (como
     # desarme) pra projeção ficar perto da taxa real do jogador.
@@ -258,6 +258,10 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
     prob = 1.0 - poisson_pmf(0, lam)          # P(≥1 amarelo)
     if prob < MIN_PROB["player_cards"]:
         return None
+    # near_suspension = acúmulo do CICLO em (limiar-1), ou seja 2 de 3 amarelos
+    # (amarelos_da_temporada % 3 == 2). Mostramos "2 de 3", nunca o total da
+    # temporada — o total infla por ganchos já cumpridos e confunde.
+    accrual = f"{SUSPENSION_YELLOWS - 1} de {SUSPENSION_YELLOWS} amarelos"
     # DOIS motivos distintos:
     #  (A) risco puro — a taxa do jogador × o jogo já pedem cartão;
     #  (B) gancho estratégico — está a 1 da suspensão E o jogo de agora é mais
@@ -267,13 +271,13 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
         tag = CARD_TAG_STRATEGIC
         nxt = f" antes de enfrentar {next_opp}" if next_opp else " antes de um jogo mais difícil"
         reason = (
-            f"{player.name} tem {yellows} amarelos (a 1 da suspensão) e pega um jogo "
-            f"mais fácil agora{nxt} — cenário de cumprir o gancho já. "
+            f"{player.name} está a 1 amarelo da suspensão ({accrual} no acúmulo) e pega "
+            f"um jogo mais fácil agora{nxt} — vale cumprir o gancho já. "
             f"Leva {yellows_pg:.2f} amarelo/jogo; modelo: {prob*100:.0f}% de levar cartão."
         )
     else:
         tag = CARD_TAG_RISK
-        susp = " (a 1 da suspensão)" if near_suspension else ""
+        susp = f" (a 1 da suspensão, {accrual})" if near_suspension else ""
         reason = (
             f"{player.name} leva {yellows_pg:.2f} amarelo/jogo{susp}; {opp}. "
             f"Modelo: {prob*100:.0f}% de levar cartão."
@@ -309,7 +313,7 @@ def _cards_props(players: list[PlayerSchema], team: str,
         pick = _card_pick(p, team, _per_game(yc, p.appearances),
                           opp_attack_scaler, opp, near_suspension=near,
                           strategic=(near and strategic_window),
-                          next_opp=next_opp, yellows=yc)
+                          next_opp=next_opp)
         if pick:
             picks.append(pick)
     return picks

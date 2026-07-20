@@ -1636,8 +1636,8 @@ class FootballDataService:
         gol). Agrega match_props dos jogos próximos; resultado cacheado em disco
         (o caro é o elenco/temporada, já cacheado por time/jogador). `league_id`
         filtra por liga (feed caro → filtro no servidor, não só no cliente)."""
-        # ":n7" = cartão diferencia risco × gancho estratégico (tag/razão novos).
-        key = f"{_CACHE_V}:propsfeed:n7:{context}:{league_id or 'all'}:{limit}:{max_matches}"
+        # ":n8" = razão do cartão mostra acúmulo do ciclo (2 de 3), não o total.
+        key = f"{_CACHE_V}:propsfeed:n8:{context}:{league_id or 'all'}:{limit}:{max_matches}"
         cached = self._disk.get(key)
         if cached is not None:
             return [RecommendationOut.model_validate(d) for d in cached]
