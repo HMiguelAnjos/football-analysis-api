@@ -45,6 +45,25 @@ logger = logging.getLogger(__name__)
 # antigo é ignorado em vez de servir dados no formato velho.
 _CACHE_V = "v8"  # bump: novas ligas (Série B, Libertadores, Copa do Brasil)
 
+# Acima disso o mercado ao vivo virou certeza — não é aposta, é fato. Serve de
+# rede de segurança pro que a checagem de placar não pegar.
+_LIVE_MAX_PICK_PROB = 0.99
+
+
+def _live_settled(market: str, line: Optional[float],
+                  home_goals: Optional[int], away_goals: Optional[int]) -> bool:
+    """True quando o mercado JÁ FOI DECIDIDO pelo placar atual — não faz sentido
+    recomendar (ex.: 1-1 → "ambas marcam" já aconteceu; 3 gols → over 2.5 batido).
+    1X2 nunca entra aqui: só resolve no apito final."""
+    if home_goals is None or away_goals is None:
+        return False
+    if market == "btts":
+        return home_goals >= 1 and away_goals >= 1     # sim feito / não impossível
+    if market == "over_under" and line is not None:
+        return (home_goals + away_goals) > line        # over batido / under morto
+    return False
+
+
 # Nome/país amigável por liga (api-football). Duplo uso: (1) fallback pra garantir
 # que TODA liga configurada apareça no filtro mesmo se a chamada de catálogo falhar;
 # (2) rótulo claro — "Serie A · Brazil" se confundia com a Itália no dropdown.
@@ -1104,6 +1123,13 @@ class FootballDataService:
                 ("btts", "no", None, probs["btts_no"]),
             ]
             for mk, sel, line, model_p in cands:
+                # O que JÁ ACONTECEU não é aposta: com 1-1 aos 73', "ambas
+                # marcam: sim" saía a 100%. Descarta mercado já resolvido pelo
+                # placar (e, por segurança, o que virou certeza matemática).
+                if _live_settled(mk, line, m.home_goals, m.away_goals):
+                    continue
+                if model_p >= _LIVE_MAX_PICK_PROB:
+                    continue
                 if model_p < config.MIN_PICK_PROB:
                     continue
                 odd = odd_map.get((mk, sel, line))

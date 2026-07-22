@@ -105,3 +105,25 @@ def test_already_btts_locks_yes():
     assert p["btts_yes"] == 1.0
     # E over 2.5: já tem 2 gols, então over depende só de +1 gol sair.
     assert 0.0 < p["over_2.5"] < 1.0
+
+
+def test_live_settled_skips_already_decided_markets():
+    """O que já aconteceu não é aposta: com 1-1 aos 73', 'ambas marcam' saía
+    a 100%. _live_settled corta mercado já resolvido pelo placar."""
+    from src.services.football.data_service import _live_settled
+
+    # BTTS: os dois já marcaram → resolvido (sim feito, não impossível).
+    assert _live_settled("btts", None, 1, 1) is True
+    assert _live_settled("btts", None, 2, 3) is True
+    # Só um marcou (ou 0-0) → ainda em aberto.
+    assert _live_settled("btts", None, 1, 0) is False
+    assert _live_settled("btts", None, 0, 0) is False
+
+    # Over/under: total já passou da linha → resolvido.
+    assert _live_settled("over_under", 2.5, 2, 1) is True    # 3 gols
+    assert _live_settled("over_under", 2.5, 1, 1) is False   # 2 gols, em aberto
+
+    # 1X2 nunca é "já decidido" — só resolve no apito final.
+    assert _live_settled("1x2", None, 3, 0) is False
+    # Sem placar → não dá pra afirmar nada.
+    assert _live_settled("btts", None, None, None) is False
