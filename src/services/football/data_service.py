@@ -214,25 +214,26 @@ class FootballDataService:
         """Descarta as odds cacheadas de um jogo (chamado quando há gol ao vivo)."""
         self._odds_cache.invalidate(self._odds_key(match_id, context))
 
-    def live_matches(self, context: str = "general") -> list[Match]:
+    def live_matches(self, context: str = "general",
+                     league_id: Optional[int] = None) -> list[Match]:
         """Jogos ao vivo do contexto, via 1 chamada agregada barata
         (fixtures?live=all), filtrados pelas ligas do contexto. Cache curtíssimo
-        pra não repetir a chamada dentro do mesmo tick."""
+        pra não repetir a chamada dentro do mesmo tick. `league_id` filtra uma
+        liga específica (o cache guarda TODOS; o filtro é aplicado na leitura)."""
         key = f"live:{context}"
-        cached = self._odds_cache.get(key)
-        if cached is not None:
-            return cached
-        getter = getattr(self._football(context), "get_live_matches", None)
-        if getter is None:
-            return []
-        try:
-            allowed = set(competition.resolve(context).league_ids)
-            live = [m for m in (getter() or []) if not allowed or m.league_id in allowed]
-        except Exception:  # noqa: BLE001 — provider instável nunca derruba o worker
-            logger.warning("live_matches: falha buscando jogos ao vivo (%s)", context)
-            live = []
-        self._odds_cache.set(key, live, 30)
-        return live
+        live = self._odds_cache.get(key)
+        if live is None:
+            getter = getattr(self._football(context), "get_live_matches", None)
+            if getter is None:
+                return []
+            try:
+                allowed = set(competition.resolve(context).league_ids)
+                live = [m for m in (getter() or []) if not allowed or m.league_id in allowed]
+            except Exception:  # noqa: BLE001 — provider instável nunca derruba o worker
+                logger.warning("live_matches: falha buscando jogos ao vivo (%s)", context)
+                live = []
+            self._odds_cache.set(key, live, 30)
+        return [m for m in live if m.league_id == league_id] if league_id else live
 
     # --- API pública (schemas do front) ------------------------------------
 
@@ -945,6 +946,7 @@ class FootballDataService:
             tf.xga = adv["xga"]
 
     def live_analysis(self, *, context: str = "general", limit: int = 30,
+                      league_id: Optional[int] = None,
                       include_avoid: bool = False):
         """Recomendações AO VIVO da ENGINE DE ANÁLISE (LiveGameStateScore +
         regras de escanteios/gols/cartões da seção 5). Monta LiveFeatures das
@@ -953,7 +955,7 @@ class FootballDataService:
         from src.analysis.helpers import normalize as _normalize
         from src.analysis.live import LiveRecommendationEngine
 
-        ck = f"analysisfeed:live:{context}:{int(include_avoid)}"
+        ck = f"analysisfeed:live:{context}:{league_id or 'all'}:{int(include_avoid)}"
         cached = self._odds_cache.get(ck)
         if cached is not None:
             return cached[:limit]
@@ -973,7 +975,7 @@ class FootballDataService:
 
         eng = LiveRecommendationEngine()
         out = []
-        for m in self.live_matches(context):
+        for m in self.live_matches(context, league_id):
             if m.home_goals is None or m.away_goals is None:
                 continue
             stats = self._live_stats(m, context)
@@ -1066,6 +1068,7 @@ class FootballDataService:
         )
 
     def live_opportunities(self, *, context: str = "general", limit: int = 30,
+                           league_id: Optional[int] = None,
                            min_edge: Optional[float] = None,
                            min_odd: Optional[float] = None,
                            max_odd: Optional[float] = None):
@@ -1083,13 +1086,13 @@ class FootballDataService:
         min_odd = config.MIN_ODD if min_odd is None else min_odd
         max_odd = config.MAX_ODD if max_odd is None else max_odd
 
-        ck = f"livefeed:opps:{context}:{min_odd}:{max_odd}"
+        ck = f"livefeed:opps:{context}:{league_id or 'all'}:{min_odd}:{max_odd}"
         cached = self._odds_cache.get(ck)
         if cached is not None:
             return cached[:limit]
 
         out: list[RecommendationOut] = []
-        for m in self.live_matches(context):
+        for m in self.live_matches(context, league_id):
             if m.home_goals is None or m.away_goals is None:
                 continue
             hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
@@ -1213,20 +1216,21 @@ class FootballDataService:
         self._odds_cache.set(key, data, config.LIVE_FEED_TTL)
         return data
 
-    def live_shots(self, *, context: str = "general", limit: int = 40):
+    def live_shots(self, *, context: str = "general", limit: int = 40,
+                   league_id: Optional[int] = None):
         """ESPECIALISTA EM CHUTES A GOL ao vivo: pra cada jogador em campo,
         projeta os chutes no gol que ainda vêm (taxa de temporada + ritmo no
         jogo + pressão do time) e recomenda quando é provável (≥ MIN_PICK_PROB)
         ele bater a próxima linha. Ordena pelos mais prováveis."""
         from src.probability import live_shots_remaining, prob_at_least, remaining_fraction
 
-        ck = f"livefeed:shots:{context}"
+        ck = f"livefeed:shots:{context}:{league_id or 'all'}"
         cached = self._odds_cache.get(ck)
         if cached is not None:
             return cached[:limit]
 
         out: list[RecommendationOut] = []
-        for m in self.live_matches(context):
+        for m in self.live_matches(context, league_id):
             getter = getattr(self._football(context), "get_live_player_shots", None)
             if getter is None:
                 break
@@ -1305,7 +1309,8 @@ class FootballDataService:
             context=context, team=team_name, player_number=number, stats_used=tiles,
         )
 
-    def live_goals(self, *, context: str = "general", limit: int = 40):
+    def live_goals(self, *, context: str = "general", limit: int = 40,
+                   league_id: Optional[int] = None):
         """GOLS AO VIVO: jogador que pode (ainda) marcar — taxa de gol da
         temporada × tempo restante × pressão do time, + batedor de pênalti.
         Pula quem já marcou (bet de artilheiro já ganha)."""
@@ -1314,13 +1319,13 @@ class FootballDataService:
         from src.probability import remaining_fraction
         from src.recommendation.player_props import MATCH_PEN_GOALS
 
-        ck = f"livefeed:goals:{context}"
+        ck = f"livefeed:goals:{context}:{league_id or 'all'}"
         cached = self._odds_cache.get(ck)
         if cached is not None:
             return cached[:limit]
 
         out: list[RecommendationOut] = []
-        for m in self.live_matches(context):
+        for m in self.live_matches(context, league_id):
             getter = getattr(self._football(context), "get_live_player_shots", None)
             if getter is None:
                 break

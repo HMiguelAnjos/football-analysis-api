@@ -578,30 +578,33 @@ def analysis_recommendations(limit: int = Query(30, ge=1, le=100),
 
 
 @app.get("/football/live-opportunities", response_model=list[RecommendationOut])
-def live_opportunities(limit: int = Query(30, ge=1, le=100)):
+def live_opportunities(limit: int = Query(30, ge=1, le=100),
+                       league_id: int | None = Query(None)):
     """Picks de valor AO VIVO (modelo in-play × odd ao vivo)."""
     try:
-        return data_service.live_opportunities(limit=limit)
+        return data_service.live_opportunities(limit=limit, league_id=league_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("live opportunities falhou: %s", exc)
         return []
 
 
 @app.get("/football/live-shots", response_model=list[RecommendationOut])
-def live_shots(limit: int = Query(40, ge=1, le=100)):
+def live_shots(limit: int = Query(40, ge=1, le=100),
+               league_id: int | None = Query(None)):
     """Especialista em CHUTES A GOL ao vivo (jogadores prováveis de chutar mais)."""
     try:
-        return data_service.live_shots(limit=limit)
+        return data_service.live_shots(limit=limit, league_id=league_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("live shots falhou: %s", exc)
         return []
 
 
 @app.get("/football/live-goals", response_model=list[RecommendationOut])
-def live_goals(limit: int = Query(40, ge=1, le=100)):
+def live_goals(limit: int = Query(40, ge=1, le=100),
+               league_id: int | None = Query(None)):
     """GOLS ao vivo: jogador que ainda pode marcar (taxa + pressão + pênalti)."""
     try:
-        return data_service.live_goals(limit=limit)
+        return data_service.live_goals(limit=limit, league_id=league_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("live goals falhou: %s", exc)
         return []
@@ -609,10 +612,12 @@ def live_goals(limit: int = Query(40, ge=1, le=100)):
 
 @app.get("/football/live-analysis", response_model=list[AnalysisRecommendationOut])
 def live_analysis_recommendations(limit: int = Query(30, ge=1, le=100),
-                                  include_avoid: bool = Query(False)):
+                                  include_avoid: bool = Query(False),
+                                  league_id: int | None = Query(None)):
     """Engine de ANÁLISE (scores + grade) AO VIVO — escanteios/gols/cartões."""
     try:
-        return data_service.live_analysis(limit=limit, include_avoid=include_avoid)
+        return data_service.live_analysis(limit=limit, include_avoid=include_avoid,
+                                          league_id=league_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("live analysis falhou: %s", exc)
         return []
@@ -627,9 +632,16 @@ def live_recs_by_match(match_id: int, db: Session = Depends(get_db)):
 
 @app.get("/football/live-recommendations/pending", response_model=list[LiveRecoOut])
 def live_recs_pending(db: Session = Depends(get_db),
-                      context: str | None = Query(None)):
+                      context: str | None = Query(None),
+                      league_id: int | None = Query(None)):
     from src.services import live_reco_service as lrs
-    return [front_mappers.live_reco_to_out(r) for r in lrs.list_pending(db, context)]
+    rows = lrs.list_pending(db, context)
+    if league_id:
+        # A tabela guarda só o NOME da liga; filtra pelos jogos AO VIVO da liga
+        # (mesma fonte cacheada dos outros feeds) em vez de casar string.
+        live_ids = {m.id for m in data_service.live_matches(context or "general", league_id)}
+        rows = [r for r in rows if r.match_id in live_ids]
+    return [front_mappers.live_reco_to_out(r) for r in rows]
 
 
 @app.patch("/football/live-recommendations/{rec_id}/status", response_model=LiveRecoOut)
