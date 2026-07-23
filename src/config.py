@@ -246,6 +246,21 @@ SETTLEMENT_INTERVAL_SECONDS: int = int(
 )
 
 # ---------------------------------------------------------------------------
+# Escanteios — worker de features rolantes (pré-jogo) + parâmetros do modelo
+# ---------------------------------------------------------------------------
+ENABLE_CORNER_WORKER: bool = _flag("ENABLE_CORNER_WORKER", "0")
+CORNER_WORKER_INTERVAL_SECONDS: int = int(
+    os.getenv("CORNER_WORKER_INTERVAL_SECONDS", str(6 * 3600))   # 6h
+)
+# Quantos jogos entram nas janelas rolantes (L5/L10). Busca L10 e deriva L5.
+CORNER_FEATURES_LAST_N: int = int(os.getenv("CORNER_FEATURES_LAST_N", "10"))
+# Decaimento temporal: meia-vida em JOGOS (peso ~0.5 a cada N jogos pra trás).
+# Jogos recentes pesam mais — não é média simples (regra geral do spec).
+CORNER_DECAY_HALFLIFE: float = float(os.getenv("CORNER_DECAY_HALFLIFE", "5"))
+# Regra 3: boost no time com estilo ofensivo acima da média da liga.
+CORNER_STYLE_BOOST: float = float(os.getenv("CORNER_STYLE_BOOST", "0.08"))
+
+# ---------------------------------------------------------------------------
 # Banco de dados + Auth
 # ---------------------------------------------------------------------------
 DATABASE_URL: str = os.getenv(

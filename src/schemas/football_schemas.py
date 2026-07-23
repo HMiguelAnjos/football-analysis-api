@@ -392,6 +392,28 @@ class PickResultOut(BaseModel):
     settled_at: Optional[str] = None
 
 
+class CornerHalfSchema(BaseModel):
+    first_half: float
+    second_half: float
+
+
+class CornerPredictionOut(BaseModel):
+    match_id: int
+    match: str
+    league: Optional[str] = None
+    expected_total: float
+    by_half: CornerHalfSchema
+    home_expected: float
+    away_expected: float
+    line: float
+    prob_over: float
+    confidence: float                 # 0-100
+    sample_size: int                  # min de jogos usados entre os dois times
+    used_h2h: bool
+    used_style: bool
+    note: Optional[str] = None        # ex.: "features desatualizadas / sem dado"
+
+
 class PerfBreakdownItem(BaseModel):
     key: str
     label: Optional[str] = None

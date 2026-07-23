@@ -34,6 +34,7 @@ from src.schemas.auth_schemas import (
 from src import competition
 from src.schemas.football_schemas import (
     AnalysisRecommendationOut,
+    CornerPredictionOut,
     ContextSchema,
     GenerateRequest,
     LeagueSchema,
@@ -123,6 +124,13 @@ async def lifespan(app: FastAPI):
             await start_settlement_worker()
         except Exception as exc:  # noqa: BLE001
             logger.warning("settlement worker não subiu (%s)", exc)
+
+    if config.ENABLE_CORNER_WORKER:
+        try:
+            from src.workers.corner_features_worker import start_corner_features_worker
+            await start_corner_features_worker()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("corner features worker não subiu (%s)", exc)
 
     if config.ENABLE_LIVE_ODDS_WORKER:
         try:
@@ -433,6 +441,34 @@ def match_markets(match_id: int):
 @app.get("/football/matches/{match_id}/props", response_model=list[RecommendationOut])
 def match_props(match_id: int):
     return data_service.match_props(match_id)
+
+
+@app.get("/football/corners/calibration")
+def corners_calibration(
+    _user=Depends(require_permission(VIEW_PERFORMANCE)),
+    db: Session = Depends(get_db),
+):
+    """Previsão × real dos escanteios (item 6): viés, erro médio, taxa da linha.
+    Base pra afinar o modelo com dado de campo."""
+    from src.services.football.corner_calibration_service import calibration_report
+    try:
+        return calibration_report(db)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Erro na calibração: {exc}")
+
+
+@app.get("/football/corners/{match_id}", response_model=CornerPredictionOut)
+def corners_prediction(match_id: int, db: Session = Depends(get_db)):
+    """Escanteios esperados do jogo (Fase 1, pré-jogo): total, por tempo, linha,
+    prob de over e amostra/confiança. Lê features pré-computadas pelo worker."""
+    from src.services.football.corners_service import corner_prediction
+    try:
+        out = corner_prediction(db, data_service, match_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Erro ao prever escanteios: {exc}")
+    if out is None:
+        raise HTTPException(status_code=404, detail="Jogo não encontrado")
+    return out
 
 
 @app.get("/football/props", response_model=list[RecommendationOut])

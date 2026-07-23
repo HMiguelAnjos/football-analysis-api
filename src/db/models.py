@@ -220,6 +220,107 @@ class FootballLiveRecommendation(Base):
     )
 
 
+# ─── Escanteios: stats brutas por jogo + features rolantes (Fase 1) ──────
+
+
+class FootballMatchCornerStats(Base):
+    """Estatísticas BRUTAS de escanteio de um jogo, por time (1 linha por time
+    por jogo). Base do worker que recalcula as features rolantes. Imutável
+    (jogo finalizado). Escanteio por tempo NÃO existe na api-football → só total.
+    """
+    __tablename__ = "football_match_corner_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    match_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    team_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    opponent_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_home: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    league_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    match_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    corners_for: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    corners_against: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_shots: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    blocked_shots: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    shots_insidebox: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    possession: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    goals_for: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    goals_against: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    goals_for_ht: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    goals_against_ht: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "team_id", name="uq_corner_stats_match_team"),
+    )
+
+
+class FootballTeamCornerFeatures(Base):
+    """Features rolantes de escanteio de um time (1 linha por time, UPSERT pelo
+    worker). Já com decaimento temporal aplicado — o endpoint só LÊ, nunca
+    recalcula em request."""
+    __tablename__ = "football_team_corner_features"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    context: Mapped[str] = mapped_column(String(20), nullable=False, default="general")
+    league_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    media_favor_l5: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    media_favor_l10: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    media_contra_l5: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    media_contra_l10: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    prop_1t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    prop_2t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    indice_estilo_ofensivo: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # 0-1 — tendência de pressionar perdendo em casa. Fase 2 (fica nulo por ora).
+    flag_pressiona_perdendo: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "context", name="uq_corner_features_team_ctx"),
+    )
+
+
+class FootballCornerPrediction(Base):
+    """Previsão de escanteios registrada no kickoff × resultado real (calibração
+    contínua — item 6). 1 linha por jogo; `actual_total`/`result`/`error` são
+    preenchidos pelo worker quando o jogo termina."""
+    __tablename__ = "football_corner_predictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    match_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    context: Mapped[str] = mapped_column(String(20), nullable=False, default="general")
+    league: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    match: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    model_version: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    kickoff_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    predicted_total: Mapped[float] = mapped_column(Float, nullable=False)
+    predicted_1t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    predicted_2t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    line: Mapped[float] = mapped_column(Float, nullable=False)
+    prob_over: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Preenchidos no settlement:
+    actual_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # over|under|push
+    error: Mapped[Optional[float]] = mapped_column(Float, nullable=True)      # previsto - real
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "context", name="uq_corner_pred_match_ctx"),
+    )
+
+
 # ─── Snapshot / cache de dados de provider (corta chamadas externas) ──────
 
 
