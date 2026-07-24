@@ -261,6 +261,34 @@ CORNER_DECAY_HALFLIFE: float = float(os.getenv("CORNER_DECAY_HALFLIFE", "5"))
 CORNER_STYLE_BOOST: float = float(os.getenv("CORNER_STYLE_BOOST", "0.08"))
 
 # ---------------------------------------------------------------------------
+# Cartões — worker de features (pré-jogo) + parâmetros do modelo
+# ---------------------------------------------------------------------------
+ENABLE_CARD_WORKER: bool = _flag("ENABLE_CARD_WORKER", "0")
+CARD_WORKER_INTERVAL_SECONDS: int = int(
+    os.getenv("CARD_WORKER_INTERVAL_SECONDS", str(6 * 3600))
+)
+CARD_FEATURES_LAST_N: int = int(os.getenv("CARD_FEATURES_LAST_N", "10"))
+CARD_DECAY_HALFLIFE: float = float(os.getenv("CARD_DECAY_HALFLIFE", "5"))
+# Regra 4: boost do total em clássico / jogo decisivo (+15% default).
+CARD_CONTEXT_BOOST: float = float(os.getenv("CARD_CONTEXT_BOOST", "0.15"))
+# Regra 3: acréscimo pro visitante.
+CARD_AWAY_BOOST: float = float(os.getenv("CARD_AWAY_BOOST", "0.08"))
+# Regra do pendurado (Fase B): fatores de aumento/redução da prob individual.
+CARD_PENDURADO_BOOST: float = float(os.getenv("CARD_PENDURADO_BOOST", "0.30"))
+CARD_PENDURADO_DAMP: float = float(os.getenv("CARD_PENDURADO_DAMP", "0.20"))
+# Clássicos/rivalidades (regra flag_classico) — pares de team_id (api-football).
+# Semente dos grandes clássicos BR; ajuste/complete via CLASSICO_PAIRS (env CSV
+# "a-b,c-d"). 127=Flamengo 124=Fluminense 131=Corinthians 126=São Paulo
+# 121=Palmeiras 119=Internacional 130=Grêmio 118=Bahia 120=Vitória
+# 134=Santos 133=Vasco 1062=Atlético-MG 147=Cruzeiro.
+_classico_default = "127-124,127-133,131-126,131-134,126-121,119-130,118-120,1062-147"
+CLASSICO_PAIRS: list[tuple[int, int]] = [
+    tuple(sorted(int(x) for x in pair.split("-")))            # ordena p/ lookup
+    for pair in os.getenv("CLASSICO_PAIRS", _classico_default).split(",")
+    if "-" in pair
+]
+
+# ---------------------------------------------------------------------------
 # Banco de dados + Auth
 # ---------------------------------------------------------------------------
 DATABASE_URL: str = os.getenv(

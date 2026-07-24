@@ -126,6 +126,7 @@ class ApiFootballProvider:
             home_goals=goals.get("home"),
             away_goals=goals.get("away"),
             minute=(fixture.get("status") or {}).get("elapsed"),
+            referee=fixture.get("referee") or "",
             venue=venue.get("name", "") or "",
             stage=stage, group=group, city=venue.get("city", "") or "",
             extra_time_home=et.get("home"), extra_time_away=et.get("away"),
@@ -497,6 +498,28 @@ class ApiFootballProvider:
             if tid:
                 out[tid] = out.get(tid, 0) + 1
         return out
+
+    def get_match_card_events(self, fixture_id: int) -> dict:
+        """Cartões por time e por TEMPO (o evento tem minuto) + ids de quem levou.
+        1 chamada (fixtures/events). {"teams": {tid: {total,1t,2t}}, "players":
+        set(player_id que levou cartão)}."""
+        items = self._client.response("fixtures/events", {"fixture": fixture_id})
+        teams: dict[int, dict] = {}
+        players: set[int] = set()
+        for ev in items:
+            if (ev.get("type") or "").lower() != "card":
+                continue
+            tid = int((ev.get("team", {}) or {}).get("id", 0) or 0)
+            minute = int((ev.get("time") or {}).get("elapsed") or 0)
+            half = "1t" if minute <= 45 else "2t"
+            if tid:
+                d = teams.setdefault(tid, {"total": 0, "1t": 0, "2t": 0})
+                d["total"] += 1
+                d[half] += 1
+            pid = int((ev.get("player") or {}).get("id", 0) or 0)
+            if pid:
+                players.add(pid)
+        return {"teams": teams, "players": players}
 
     def get_live_player_shots(self, fixture_id: int) -> list[dict]:
         """Chutes de cada jogador NO JOGO atual (1 chamada: fixtures/players).

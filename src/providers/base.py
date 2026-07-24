@@ -52,6 +52,7 @@ class Match:
     home_goals: Optional[int] = None
     away_goals: Optional[int] = None
     minute: Optional[int] = None     # minuto do jogo, se ao vivo
+    referee: str = ""                # árbitro (feature de maior peso pra cartões)
     venue: str = ""
     # ── Campos de copa/mata-mata (nulos em liga regular) ─────────────────
     stage: Optional[str] = None      # "group" | "round_of_16" | "quarter" | ...

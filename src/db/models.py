@@ -321,6 +321,129 @@ class FootballCornerPrediction(Base):
     )
 
 
+# ─── Cartões: stats brutas + features + árbitro + calibração ──────────────
+
+
+class FootballMatchCardStats(Base):
+    """Stats BRUTAS de cartão de um jogo, por time (1 linha por time por jogo).
+    Cartão por tempo VEM dos eventos (têm minuto). Guarda o árbitro do jogo →
+    alimenta football_referee_stats sem chamada extra."""
+    __tablename__ = "football_match_card_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    match_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    team_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    opponent_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_home: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    league_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    match_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    cards_for: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cards_for_1t: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cards_for_2t: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fouls: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    referee: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    match_total_cards: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "team_id", name="uq_card_stats_match_team"),
+    )
+
+
+class FootballTeamCardFeatures(Base):
+    """Features rolantes de cartão de um time (UPSERT pelo worker)."""
+    __tablename__ = "football_team_card_features"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    context: Mapped[str] = mapped_column(String(20), nullable=False, default="general")
+    league_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    media_favor_l5: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    media_favor_l10: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    media_faltas_l5: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    prop_1t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    prop_2t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "context", name="uq_card_features_team_ctx"),
+    )
+
+
+class FootballRefereeStats(Base):
+    """Média de cartões por jogo do árbitro (feature de MAIOR peso). Acumulada
+    incrementalmente dos jogos que o worker já processa (sem request extra)."""
+    __tablename__ = "football_referee_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    referee: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    matches: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_cards: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_cards: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class FootballCardPrediction(Base):
+    """Previsão de cartões no kickoff × real (calibração — item 6)."""
+    __tablename__ = "football_card_predictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    match_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    context: Mapped[str] = mapped_column(String(20), nullable=False, default="general")
+    league: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    match: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    model_version: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    kickoff_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    predicted_total: Mapped[float] = mapped_column(Float, nullable=False)
+    predicted_1t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    predicted_2t: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    line: Mapped[float] = mapped_column(Float, nullable=False)
+    prob_over: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    referee_factor: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actual_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    result: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    error: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "context", name="uq_card_pred_match_ctx"),
+    )
+
+
+class FootballPenduradoLog(Base):
+    """Log SEPARADO da regra do pendurado (Fase B): 1 linha por jogador-jogo em
+    que a regra foi ativada. Valida os fatores ↑/↓ com dado próprio (previsão ×
+    o jogador realmente levou amarelo?)."""
+    __tablename__ = "football_pendurado_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    match_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    context: Mapped[str] = mapped_column(String(20), nullable=False, default="general")
+    player_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    player_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    team_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    effect: Mapped[str] = mapped_column(String(10), nullable=False)   # boost | damp
+    reason: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    base_prob: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    adjusted_prob: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    got_card: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "player_id", name="uq_pendurado_match_player"),
+    )
+
+
 # ─── Snapshot / cache de dados de provider (corta chamadas externas) ──────
 
 

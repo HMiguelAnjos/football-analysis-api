@@ -864,6 +864,30 @@ class FootballDataService:
         self._disk.set(key, data, config.STATS_MATCH_TTL)
         return data
 
+    def match_card_events(self, match_id: int, context: str = "general") -> dict:
+        """Cartões por time e por TEMPO + ids de quem levou (eventos com minuto).
+        Cache em DISCO longo (jogo finalizado é imutável). Base do modelo de
+        cartões (split 1T/2T real) e da liquidação do pendurado."""
+        key = f"cardevents:{context}:{match_id}"
+        cached = self._disk.get(key)
+        if cached is not None:
+            return {"teams": {int(k): v for k, v in (cached.get("teams") or {}).items()},
+                    "players": set(cached.get("players") or [])}
+        getter = getattr(self._football(context), "get_match_card_events", None)
+        teams: dict = {}
+        players: list = []
+        if getter is not None:
+            try:
+                r = getter(match_id) or {}
+                teams = r.get("teams") or {}
+                players = sorted(r.get("players") or [])
+            except Exception:  # noqa: BLE001
+                teams, players = {}, []
+        # JSON exige chave string; converte na leitura.
+        self._disk.set(key, {"teams": {str(k): v for k, v in teams.items()},
+                             "players": players}, config.STATS_MATCH_TTL)
+        return {"teams": {int(k): v for k, v in teams.items()}, "players": set(players)}
+
     def _team_advanced_stats(self, team_id: int, context: str):
         """Médias por jogo (xG, finalizações no alvo, escanteios, cartões, posse)
         dos últimos N jogos do time. Cacheado em disco. None se sem dado —

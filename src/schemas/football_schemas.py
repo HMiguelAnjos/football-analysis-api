@@ -414,6 +414,31 @@ class CornerPredictionOut(BaseModel):
     note: Optional[str] = None        # ex.: "features desatualizadas / sem dado"
 
 
+class PenduradoOut(BaseModel):
+    player: str
+    team: str
+    effect: str                       # boost | damp
+    reason: str
+
+
+class CardPredictionOut(BaseModel):
+    match_id: int
+    match: str
+    league: Optional[str] = None
+    expected_total: float
+    by_half: CornerHalfSchema
+    home_expected: float
+    away_expected: float
+    line: float
+    prob_over: float
+    confidence: float
+    sample_size: int
+    referee_factor: float             # multiplicador do árbitro (1.0 = neutro)
+    used_context: bool                # clássico/decisivo aplicado?
+    pendurados: list[PenduradoOut] = []
+    note: Optional[str] = None
+
+
 class PerfBreakdownItem(BaseModel):
     key: str
     label: Optional[str] = None
