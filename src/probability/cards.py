@@ -64,6 +64,24 @@ class CardPrediction:
     used_context: bool
 
 
+def pendurado_effect(base_prob: float, *, strategic: bool, next_away: bool,
+                     boost: float = 0.30, damp: float = 0.20) -> tuple[str, str, float, float]:
+    """Regra do pendurado (efeito DUPLO). Devolve (efeito, motivo, prob_ajustada,
+    delta). base_prob = P(o jogador levar amarelo) sem a regra.
+
+      - pendurado + (jogo fácil→difícil OU próximo fora) → AUMENTA (limpar o cartão
+        no jogo de menor custo);
+      - pendurado sem incentivo → REDUZ (dissuasão: se comporta pra não pegar
+        gancho à toa).
+    """
+    if strategic or next_away:
+        adj = min(base_prob * (1.0 + boost), 0.95)
+        reason = "gancho estratégico" if strategic else "próximo jogo fora"
+        return "boost", reason, round(adj, 4), round(adj - base_prob, 4)
+    adj = base_prob * (1.0 - damp)
+    return "damp", "pendurado sem incentivo (dissuasão)", round(adj, 4), round(adj - base_prob, 4)
+
+
 def _foul_factor(fouls: Optional[float], league_fouls_avg: Optional[float]) -> float:
     """Faltas acima da média da liga → mais cartão (regra 1). 1.0 sem referência."""
     if not fouls or not league_fouls_avg:

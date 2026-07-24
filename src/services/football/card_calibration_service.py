@@ -9,8 +9,9 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.db.models import FootballCardPrediction
-from src.services.football.cards_service import card_prediction
+from src import config
+from src.db.models import FootballCardPrediction, FootballPenduradoLog
+from src.services.football.cards_service import card_prediction, pendurado_effects
 from src.services.football.data_service import FootballDataService
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,63 @@ def settle_predictions(db: Session, data: FootballDataService,
     if settled:
         db.commit()
     return settled
+
+
+def log_pendurados(db: Session, data: FootballDataService,
+                   context: str = "general") -> int:
+    """Log SEPARADO da regra do pendurado (Fase B) pros jogos próximos das ligas
+    BR. 1 linha por jogador-jogo em que a regra ativou."""
+    logged = 0
+    for m in data._upcoming_matches(context, only_future=True):
+        if m.league_id not in config.BRAZIL_LEAGUE_IDS:
+            continue
+        if db.scalar(select(FootballPenduradoLog.id).where(
+                FootballPenduradoLog.match_id == m.id,
+                FootballPenduradoLog.context == context)):
+            continue
+        _, _, _, logs = pendurado_effects(data, m, context)
+        for lg in logs:
+            db.add(FootballPenduradoLog(match_id=m.id, context=context, **lg))
+            logged += 1
+    if logged:
+        db.commit()
+    return logged
+
+
+def settle_pendurados(db: Session, data: FootballDataService,
+                      context: str = "general") -> int:
+    """Preenche got_card (o jogador levou amarelo?) nos logs cujo jogo terminou —
+    valida os fatores ↑/↓ com dado próprio."""
+    pending = db.scalars(select(FootballPenduradoLog).where(
+        FootballPenduradoLog.context == context,
+        FootballPenduradoLog.got_card.is_(None))).all()
+    settled = 0
+    for p in pending:
+        m = data.match_domain(p.match_id, context=context)
+        if m is None or m.status != "finished":
+            continue
+        players = data.match_card_events(p.match_id, context).get("players") or set()
+        p.got_card = p.player_id in players
+        p.settled_at = datetime.now(timezone.utc)
+        settled += 1
+    if settled:
+        db.commit()
+    return settled
+
+
+def pendurado_report(db: Session) -> dict:
+    """Desempenho da regra do pendurado, SEPARADO por efeito: quantos foram
+    marcados ↑/↓ e quantos realmente levaram cartão. Valida boost/damp."""
+    rows = db.scalars(select(FootballPenduradoLog).where(
+        FootballPenduradoLog.got_card.isnot(None))).all()
+    out = {"model_version": MODEL_VERSION}
+    for eff in ("boost", "damp"):
+        grp = [r for r in rows if r.effect == eff]
+        n = len(grp)
+        hits = sum(1 for r in grp if r.got_card)
+        out[eff] = {"n": n, "levaram_cartao": hits,
+                    "taxa_pct": round(100.0 * hits / n, 1) if n else None}
+    return out
 
 
 def calibration_report(db: Session) -> dict:

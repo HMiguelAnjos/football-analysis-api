@@ -37,7 +37,7 @@ async def start_card_features_worker(
 def _tick_once() -> None:
     from src.db.database import SessionLocal
     from src.services.football.card_calibration_service import (
-        log_predictions, settle_predictions,
+        log_pendurados, log_predictions, settle_pendurados, settle_predictions,
     )
     from src.services.football.card_features_service import refresh_upcoming
     from src.services.football.data_service import FootballDataService
@@ -48,7 +48,9 @@ def _tick_once() -> None:
         stats = refresh_upcoming(db, data)
         logged = log_predictions(db, data)
         settled = settle_predictions(db, data)
-        logger.info("card features: %s | previsoes+%d | liquidadas+%d",
-                    stats, logged, settled)
+        plog = log_pendurados(db, data)
+        pset = settle_pendurados(db, data)
+        logger.info("card features: %s | prev+%d liq+%d | pendurado log+%d liq+%d",
+                    stats, logged, settled, plog, pset)
     finally:
         db.close()

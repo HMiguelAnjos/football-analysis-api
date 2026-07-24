@@ -456,10 +456,13 @@ def cards_calibration(
     _user=Depends(require_permission(VIEW_PERFORMANCE)),
     db: Session = Depends(get_db),
 ):
-    """Previsão × real dos cartões (item 6): viés, erro médio, taxa da linha."""
-    from src.services.football.card_calibration_service import calibration_report
+    """Previsão × real dos cartões (item 6): viés, erro médio, taxa da linha +
+    desempenho SEPARADO da regra do pendurado (boost × damp)."""
+    from src.services.football.card_calibration_service import (
+        calibration_report, pendurado_report,
+    )
     try:
-        return calibration_report(db)
+        return {"total": calibration_report(db), "pendurado": pendurado_report(db)}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Erro na calibração: {exc}")
 

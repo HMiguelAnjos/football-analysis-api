@@ -59,3 +59,14 @@ def test_pendurado_extra_adds_to_side():
 
 def test_none_without_base():
     assert cm.predict(_feat(0.0), _feat(2.0)) is None
+
+
+def test_pendurado_effect_dual():
+    # COM incentivo (estratégico OU próximo fora) → AUMENTA.
+    eff, reason, adj, delta = cm.pendurado_effect(0.30, strategic=True, next_away=False, boost=0.30)
+    assert eff == "boost" and adj > 0.30 and delta > 0 and "gancho" in reason
+    eff2, reason2, _, _ = cm.pendurado_effect(0.30, strategic=False, next_away=True)
+    assert eff2 == "boost" and "fora" in reason2
+    # SEM incentivo → REDUZ (dissuasão).
+    eff3, _, adj3, delta3 = cm.pendurado_effect(0.30, strategic=False, next_away=False, damp=0.20)
+    assert eff3 == "damp" and adj3 < 0.30 and delta3 < 0
