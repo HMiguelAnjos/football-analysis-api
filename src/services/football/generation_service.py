@@ -97,8 +97,6 @@ class GenerationService:
         persisted = 0
         prop_count = 0
         market_model = 0          # picks de mercado confidence-first (sem odds)
-        # Jogadores da competição (cacheado) → agrupados por time pras props.
-        players_by_team = self._players_by_team(context)
         for match in matches:
             try:
                 candidates = self.generate_for_match(
@@ -141,11 +139,10 @@ class GenerationService:
                 else:
                     market_model += len(cf)
 
-            # Player props (projeção do modelo, independem de odds).
-            if players_by_team:
-                prop_count += self._generate_props(
-                    db, match, context, players_by_team, persist,
-                )
+            # Player props (cartão, chutes no gol, desarmes, artilheiro...) —
+            # mesmos picks do feed (match_prop_picks), agora PERSISTIDOS pra ter
+            # rastreabilidade/liquidação, igual aos mercados de time.
+            prop_count += self._generate_props(db, match, context, persist)
 
         return {
             "generated": len(all_candidates) + market_model + prop_count,
@@ -191,33 +188,13 @@ class GenerationService:
             ))
         return out
 
-    def _players_by_team(self, context: str) -> dict[int, list]:
-        try:
-            players = self._data.competition_players(context)
-        except Exception as exc:  # noqa: BLE001
-            logger.info("generation: sem jogadores p/ props (%s)", exc)
-            return {}
-        out: dict[int, list] = {}
-        for p in players:
-            if p.team_id:
-                out.setdefault(p.team_id, []).append(p)
-        return out
-
-    def _generate_props(self, db, match, context, players_by_team, persist) -> int:
-        from src.recommendation.player_props import generate_player_props
-        home_form = self._data.team_form(match.home_team.id, context=context, league_id=match.league_id)
-        away_form = self._data.team_form(match.away_team.id, context=context, league_id=match.league_id)
-        if home_form is None or away_form is None:
+    def _generate_props(self, db, match, context, persist) -> int:
+        """Persiste os player props do jogo (mesmos do feed). Reusa
+        match_prop_picks — o pool que de fato funciona (team_player_pool + liga
+        + cartão BR), em vez de competition_players (que vinha vazio)."""
+        _, picks = self._data.match_prop_picks(match.id, context=context)
+        if not picks:
             return 0
-        hp = players_by_team.get(match.home_team.id, [])
-        ap = players_by_team.get(match.away_team.id, [])
-        if not hp and not ap:
-            return 0
-        picks = generate_player_props(
-            match=match, home_form=home_form, away_form=away_form,
-            home_players=hp, away_players=ap,
-            include_cards=(match.league_id in config.BRAZIL_LEAGUE_IDS),
-        )
         if not persist:
             return len(picks)
         n = 0

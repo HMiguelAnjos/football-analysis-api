@@ -707,7 +707,7 @@ class FootballDataService:
         focus = {"over_under", "btts", "double_chance", "team_total",
                  "first_half_goal", "first_30_goal", "corners", "cards"}
 
-        matches = self._upcoming_matches(context, only_future=True)
+        matches = self._upcoming_matches(context, only_future=False)
         if league_id:
             matches = [m for m in matches if m.league_id == league_id]
         out = []
@@ -781,7 +781,7 @@ class FootballDataService:
 
         engine = MarketRecommendationEngine()
         out = []
-        for m in self._upcoming_matches(context, only_future=True):
+        for m in self._upcoming_matches(context, only_future=False):
             hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
             af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
             h_adv = self._team_advanced_stats(m.home_team.id, context) if use_adv else None
@@ -1575,15 +1575,16 @@ class FootballDataService:
         self._odds_cache.set(key, out, 300)
         return out
 
-    def match_props(self, match_id: int, context: str = "general"):
-        """Player props recomendadas pra ESTE jogo (projeção × adversário).
-        Quando a escalação já saiu, recomenda SÓ titulares."""
+    def match_prop_picks(self, match_id: int, context: str = "general"):
+        """Picks CRUS de player prop pra ESTE jogo (PropPick), antes do mapper do
+        front. Base tanto do feed (match_props) quanto da PERSISTÊNCIA (worker de
+        geração salva estes na football_recommendations). (match, [PropPick])."""
         from src.providers.base import TeamForm
         from src.recommendation.player_props import generate_player_props
 
         m = self.match_domain(match_id, context=context)
         if m is None:
-            return []
+            return None, []
         hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
         af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
 
@@ -1619,6 +1620,14 @@ class FootballDataService:
             include_cards=is_br,     # cartão só nas ligas BR (regra de suspensão)
             home_card_ctx=home_ctx, away_card_ctx=away_ctx,
         )
+        return m, picks
+
+    def match_props(self, match_id: int, context: str = "general"):
+        """Player props recomendadas pra ESTE jogo (schema do front). Quando a
+        escalação já saiu, recomenda SÓ titulares."""
+        m, picks = self.match_prop_picks(match_id, context=context)
+        if m is None:
+            return []
         return [front_mappers.prop_to_out(pk, m) for pk in picks]
 
     # Margem de posições na tabela pra considerar "jogo de agora mais fácil que o
@@ -1718,7 +1727,7 @@ class FootballDataService:
             return [RecommendationOut.model_validate(d) for d in cached]
 
         # Props são pré-jogo → só partidas que ainda não começaram.
-        matches = self._upcoming_matches(context, only_future=True)
+        matches = self._upcoming_matches(context, only_future=False)
         if league_id:
             matches = [m for m in matches if m.league_id == league_id]
         matches = matches[:max_matches]
