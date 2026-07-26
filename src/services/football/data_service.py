@@ -1165,9 +1165,39 @@ class FootballDataService:
                 edge = round(model_p * odd - 1.0, 4) if odd else None
                 out.append(self._live_out(m, mk, sel, line, model_p, odd, edge,
                                           sample, context, red_h, red_a, mom_h, mom_a))
+            # CARTÕES ao vivo: linha sempre ACIMA do que já saiu (não recomenda
+            # o que já aconteceu). Ritmo atual + prior de liga.
+            cp = self._live_cards_pick(m, context, sample, red_h, red_a, mom_h, mom_a)
+            if cp is not None:
+                out.append(cp)
         out.sort(key=lambda r: (r.model_prob or 0, r.edge or 0), reverse=True)
         self._odds_cache.set(ck, out, config.LIVE_FEED_TTL)
         return out[:limit]
+
+    def _live_cards_pick(self, m: Match, context: str, sample: int,
+                         red_h, red_a, mom_h, mom_a):
+        """Recomendação de CARTÕES ao vivo (over), linha acima do total atual.
+        None sem stats ou perto do fim. Modelo: ritmo do jogo + prior de liga."""
+        from src.probability import cards as card_model
+        st = self._live_stats(m, context)
+        if st is None:
+            return None
+
+        def _c(side: dict) -> int:
+            side = side or {}
+            return int((side.get("yellow_cards") or 0) + (side.get("red_cards") or 0))
+
+        current = _c(getattr(st, "home", {})) + _c(getattr(st, "away", {}))
+        total, lam_rem = card_model.live_expected_cards(current, m.minute)
+        if lam_rem <= 0.15:                       # fim de jogo: sem tempo p/ over
+            return None
+        line = max(current + 0.5, round(total) - 1.5)
+        needed = int(round(line - current + 0.5))   # cartões além do atual
+        prob = card_model.poisson_ge(needed, lam_rem)
+        if prob < config.MIN_PICK_PROB or prob >= _LIVE_MAX_PICK_PROB:
+            return None
+        return self._live_out(m, "cards", "over", line, prob, None, None,
+                              sample, context, red_h, red_a, mom_h, mom_a)
 
     def _live_stats(self, m: Match, context: str):
         """Estatísticas ao vivo do jogo (chutes, posse, escanteios...) — base do

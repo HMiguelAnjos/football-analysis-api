@@ -133,6 +133,14 @@ GRADE_TIERS: list[tuple[str, float, float]] = [
     ("B", 70.0, 45.0),
     ("C", 62.0, 55.0),
 ]
+# AO VIVO é mais especulativo (sinal ruidoso, risco base maior): tiers mais
+# baixos que o pré-jogo, senão quase tudo cai em AVOID e a aba fica vazia.
+LIVE_GRADE_TIERS: list[tuple[str, float, float]] = [
+    ("A+", 78.0, 45.0),
+    ("A", 70.0, 55.0),
+    ("B", 60.0, 62.0),
+    ("C", 50.0, 68.0),
+]
 GRADE_FALLBACK = "AVOID"
 # Risco acima disso → AVOID direto, independente do edge.
 RISK_HARD_CAP = 70.0

@@ -186,6 +186,6 @@ class LiveRecommendationEngine:
             match_id=match_id, market=market, selection=selection, line=line,
             odd=None, confidence=round(confidence(edge, risk), 1),
             edge_score=round(edge, 1), risk_score=round(risk, 1),
-            recommendation_type="LIVE", grade=grade(edge, risk),
+            recommendation_type="LIVE", grade=grade(edge, risk, tiers=W.LIVE_GRADE_TIERS),
             reasons=reasons, warnings=warnings, raw_scores=raw, team=team, match=match,
         )

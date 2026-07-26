@@ -24,8 +24,36 @@ from typing import Optional
 
 from src.probability.corners import decayed_mean  # reuso do decaimento temporal
 from src.probability.markets import poisson_over_under
+from src.probability.poisson import poisson_pmf
 
-__all__ = ["TeamCardFeatures", "CardPrediction", "predict", "decayed_mean"]
+__all__ = ["TeamCardFeatures", "CardPrediction", "predict", "decayed_mean",
+           "live_expected_cards", "poisson_ge"]
+
+# ─── Cartões AO VIVO ────────────────────────────────────────────────────────
+LIVE_PRIOR_TOTAL = 4.5          # cartões/jogo médio (prior da liga)
+LIVE_PRIOR_WEIGHT = 0.5         # peso do prior vs. ritmo observado
+LIVE_FULLTIME = 95             # 90' + acréscimos médios
+
+
+def poisson_ge(k: int, lam: float) -> float:
+    """P(X >= k) para X ~ Poisson(lam)."""
+    if k <= 0:
+        return 1.0
+    cdf = sum(poisson_pmf(i, lam) for i in range(k))
+    return max(0.0, 1.0 - cdf)
+
+
+def live_expected_cards(current: int, minute: Optional[int], *,
+                        prior_total: float = LIVE_PRIOR_TOTAL,
+                        prior_weight: float = LIVE_PRIOR_WEIGHT) -> tuple[float, float]:
+    """Expectativa de cartões AO VIVO. Mistura o ritmo já visto no jogo com um
+    prior de liga (Bayes) pra não ser refém do minuto inicial. Devolve
+    (total_esperado, lambda_do_que_falta)."""
+    minute = max(1, min(int(minute or 0), LIVE_FULLTIME))
+    minutes_left = max(LIVE_FULLTIME - minute, 0)
+    eff_pace = (current + prior_total * prior_weight) / (minute + 90 * prior_weight)
+    lam_rem = eff_pace * minutes_left
+    return current + lam_rem, lam_rem
 
 # ─── Constantes calibráveis (o service injeta os valores do config) ─────────
 DEFAULT_PROP_1T = 0.42          # cartão sobe no 2º tempo (jogo mais truncado)

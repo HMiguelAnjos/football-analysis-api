@@ -11,11 +11,12 @@ from src.analysis import weights as W
 from src.analysis.helpers import clamp
 
 
-def grade(edge_score: float, risk_score: float) -> str:
-    """A+/A/B/C conforme (edge ≥ min) e (risco ≤ max); senão AVOID."""
+def grade(edge_score: float, risk_score: float, *, tiers=None) -> str:
+    """A+/A/B/C conforme (edge ≥ min) e (risco ≤ max); senão AVOID. `tiers`
+    permite escala própria (ex.: W.LIVE_GRADE_TIERS pro ao vivo)."""
     if risk_score > W.RISK_HARD_CAP:
         return W.GRADE_FALLBACK
-    for name, edge_min, risk_max in W.GRADE_TIERS:
+    for name, edge_min, risk_max in (tiers or W.GRADE_TIERS):
         if edge_score >= edge_min and risk_score <= risk_max:
             return name
     return W.GRADE_FALLBACK

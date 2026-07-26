@@ -61,6 +61,19 @@ def test_none_without_base():
     assert cm.predict(_feat(0.0), _feat(2.0)) is None
 
 
+def test_live_expected_cards_and_poisson_ge():
+    # 2 cartões aos 45' → projeta mais no 2º tempo (total > atual, lambda > 0).
+    total, lam = cm.live_expected_cards(2, 45)
+    assert total > 2 and lam > 0
+    # fim de jogo: quase nada a projetar.
+    _, lam_end = cm.live_expected_cards(4, 93)
+    assert lam_end < lam
+    # P(X>=k): monotônica e nos limites.
+    assert cm.poisson_ge(0, 2.0) == 1.0
+    assert 0.0 < cm.poisson_ge(1, 2.0) < 1.0
+    assert cm.poisson_ge(1, 2.0) > cm.poisson_ge(3, 2.0)
+
+
 def test_pendurado_effect_dual():
     # COM incentivo (estratégico OU próximo fora) → AUMENTA.
     eff, reason, adj, delta = cm.pendurado_effect(0.30, strategic=True, next_away=False, boost=0.30)
