@@ -386,6 +386,7 @@ class PickResultOut(BaseModel):
     selection: str
     odd: Optional[float] = None
     result: str
+    actual: Optional[str] = None       # valor real (ex.: "3 finalizações no gol")
     profit: Optional[float] = None
     analyst_name: Optional[str] = None
     created_at: str

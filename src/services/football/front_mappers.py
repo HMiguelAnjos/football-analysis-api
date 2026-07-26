@@ -142,7 +142,8 @@ def pickresult_to_out(r: FootballPickResult) -> PickResultOut:
     return PickResultOut(
         id=r.id, match=r.match or "", league=r.league or None, market=r.market,
         selection=r.selection, odd=r.odd,
-        result=_RESULT_STATUS.get(r.status, r.status), profit=r.profit_units,
+        result=_RESULT_STATUS.get(r.status, r.status), actual=r.actual_result,
+        profit=r.profit_units,
         analyst_name=r.analyst_name, created_at=_iso(r.settled_at) or "",
         settled_at=_iso(r.settled_at),
     )

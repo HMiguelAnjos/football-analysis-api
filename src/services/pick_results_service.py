@@ -19,7 +19,38 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.db.models import FootballPickResult, FootballRecommendation
-from src.recommendation.settlement import MatchResult, _norm, profit_units, settle
+from src.recommendation.settlement import (
+    MatchResult, _norm, _player_name, profit_units, settle,
+)
+
+# Mercado de jogador → (chave no player_stats, rótulo pro valor real).
+_PLAYER_ACTUAL = {
+    "player_shots": ("shots", "finalizações"),
+    "player_shots_on_target": ("shots_on_target", "finalizações no gol"),
+    "player_assists": ("assists", "assistências"),
+    "player_tackles": ("tackles", "desarmes"),
+    "player_cards": ("cards", "cartão(ões)"),
+}
+
+
+def _actual_label(rec: FootballRecommendation, result: MatchResult) -> str:
+    """Valor REAL que decidiu o pick (pra guardar no ledger e mostrar na tela):
+    prop de jogador → a stat do jogador (ex.: '3 finalizações no gol'); escanteios/
+    cartões do jogo → a contagem; artilheiro → marcou/não; senão o placar."""
+    m = rec.market
+    if m in _PLAYER_ACTUAL:
+        key, label = _PLAYER_ACTUAL[m]
+        stats = (result.player_stats or {}).get(_norm(_player_name(rec.selection)))
+        if stats is not None and key in stats:
+            return f"{int(stats[key])} {label}"
+    elif m == "anytime_scorer":
+        scored = _norm(_player_name(rec.selection)) in {_norm(s) for s in result.scorers}
+        return "marcou" if scored else "não marcou"
+    elif m == "corners" and result.corners is not None:
+        return f"{int(result.corners)} escanteios"
+    elif m == "cards" and result.cards is not None:
+        return f"{int(result.cards)} cartões"
+    return f"{result.home_goals}-{result.away_goals}"
 
 # Mercados de jogador — só pra esses vale a chamada extra de stats por jogador.
 _PLAYER_MARKETS = {
@@ -92,7 +123,7 @@ def settle_finished(db: Session, data_service) -> dict:
                 status = settle(rec.market, rec.selection, rec.line, result)
                 rec.status = status
                 rec.settled_at = datetime.now(timezone.utc)
-                rec.actual_result = f"{result.home_goals}-{result.away_goals}"
+                rec.actual_result = _actual_label(rec, result)
                 _write_ledger(db, rec, status)
                 settled += 1
             db.commit()

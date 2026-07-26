@@ -96,6 +96,24 @@ def test_player_props_settle_with_player_stats():
     assert settle("player_tackles", "Fulano — Mais de 1 desarmes", 0.5, res) == "void"
 
 
+def test_actual_label_records_real_value():
+    """O ledger deve guardar o VALOR REAL que decidiu o pick (não só o placar):
+    prop de jogador → a stat dele; escanteio/cartão → a contagem; senão o placar."""
+    from types import SimpleNamespace
+
+    from src.services.pick_results_service import _actual_label
+
+    res = MatchResult(2, 1, corners=11, cards=5, scorers=["Kanu"],
+                      player_stats={"kanu": {"shots_on_target": 3.0, "cards": 1.0}})
+    r = lambda m, s: SimpleNamespace(market=m, selection=s)  # noqa: E731
+    assert _actual_label(r("player_shots_on_target", "Kanu — Mais de 2 chutes no gol"), res) == "3 finalizações no gol"
+    assert _actual_label(r("player_cards", "Kanu — Levar cartão"), res) == "1 cartão(ões)"
+    assert _actual_label(r("anytime_scorer", "Kanu — Marcar"), res) == "marcou"
+    assert _actual_label(r("corners", "over"), res) == "11 escanteios"
+    assert _actual_label(r("cards", "over"), res) == "5 cartões"
+    assert _actual_label(r("1x2", "home"), res) == "2-1"       # fallback: placar
+
+
 def test_player_cards_settle():
     # "Levar cartão" é booleano (sem linha): HIT se levou ≥1 (amarelo ou vermelho).
     res = MatchResult(1, 1, player_stats={
