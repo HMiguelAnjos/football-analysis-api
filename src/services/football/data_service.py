@@ -84,7 +84,10 @@ _LEAGUE_DISPLAY: dict[int, tuple[str, str]] = {
 # (over/under ~56%, BTTS volátil) exigem mais confiança que o piso global. O
 # resto (dupla chance, team_total, gol cedo) usa config.MIN_PICK_PROB. Ajustável
 # conforme a validação semanal.
-_OPP_MARKET_FLOOR = {"over_under": 0.68, "btts": 0.63}
+# Piso POR MERCADO no feed de valor. over_under a 2.5 é quase coin-flip (ledger:
+# 41% real com o modelo prometendo 68%+) → piso alto (0.75) só deixa passar lean
+# forte de gols. BTTS segue em 0.63.
+_OPP_MARKET_FLOOR = {"over_under": 0.75, "btts": 0.63}
 
 
 class FootballDataService:
@@ -578,7 +581,11 @@ class FootballDataService:
             from src.probability.markets import poisson_over_under
             ha = self._team_advanced_stats(m.home_team.id, context)
             aa = self._team_advanced_stats(m.away_team.id, context)
-            knockout = bool(m.stage and m.stage != "group")
+            # Boost de cartão só em COPA. NÃO usar m.stage (o provider retorna
+            # "knockout" até em rodada de liga → o ×1.15 disparava sempre e
+            # inflava o total, empurrando a linha pra cima: no ledger o over 4.5/
+            # 5.5 falhava (33-46%) e o 2.5/3.5 acertava (55-60%).
+            knockout = m.league_id in config.CUP_LEAGUE_IDS
             # Linha ~1.5 abaixo da média projetada → over provável (≥ piso) e que
             # ainda paga (não é o total exato, quase coin-flip).
             if ha and aa and ha.corners_for and aa.corners_for:
@@ -841,7 +848,10 @@ class FootballDataService:
                 data = getter(match_id) or []
             except Exception:  # noqa: BLE001
                 data = []
-        self._disk.set(key, data, config.STATS_MATCH_TTL)
+        # Vazio → TTL curto (a api-football pode ainda não ter populado
+        # fixtures/players); com dado → cache longo (jogo finalizado é imutável).
+        ttl = config.STATS_MATCH_TTL if data else config.STATS_MATCH_EMPTY_TTL
+        self._disk.set(key, data, ttl)
         return data
 
     def _match_cards_cached(self, match_id: int, context: str) -> dict:
@@ -1615,6 +1625,11 @@ class FootballDataService:
         m = self.match_domain(match_id, context=context)
         if m is None:
             return None, []
+        # P3a: só gera props em ligas com cobertura de stat por jogador (copas
+        # fora — ver PROP_LEAGUE_IDS). Evita o desperdício de props que nunca
+        # liquidam (a Champions dava 91,5% de void no ledger).
+        if m.league_id not in config.PROP_LEAGUE_IDS:
+            return m, []
         hf = self.team_form(m.home_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.home_team.id)
         af = self.team_form(m.away_team.id, context=context, league_id=m.league_id) or TeamForm(team_id=m.away_team.id)
 
@@ -1650,6 +1665,10 @@ class FootballDataService:
             include_cards=is_br,     # cartão só nas ligas BR (regra de suspensão)
             home_card_ctx=home_ctx, away_card_ctx=away_ctx,
         )
+        # P1+P2: piso de confiança. Remove o player_cards (confiança ~30, acerto
+        # 18,8% no ledger) e todo prop <60 (faixa que acerta ~26%). Curadoria no
+        # service — o modelo (player_props.py) segue puro.
+        picks = [p for p in picks if p.confidence_score >= config.MIN_DISPLAY_CONFIDENCE]
         return m, picks
 
     def match_props(self, match_id: int, context: str = "general"):

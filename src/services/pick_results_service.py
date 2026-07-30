@@ -12,12 +12,13 @@ mercado, etc.) a partir do ledger.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src import config
 from src.db.models import FootballPickResult, FootballRecommendation
 from src.recommendation.settlement import (
     MatchResult, _norm, _player_name, profit_units, settle,
@@ -119,10 +120,26 @@ def settle_finished(db: Session, data_service) -> dict:
                 except Exception:  # noqa: BLE001
                     pass
 
+            # Carência do prop de jogador: se o jogo acabou mas fixtures/players
+            # ainda não saiu (stats vazio) e faz pouco tempo do kickoff, DEIXA o
+            # prop pending e retenta no próximo ciclo — em vez de gravar void
+            # permanente no ledger imutável. Depois da janela, aí sim liquida.
+            now = datetime.now(timezone.utc)
+            ko = match.utc_kickoff
+            if ko is not None and ko.tzinfo is None:
+                ko = ko.replace(tzinfo=timezone.utc)      # trata naive como UTC
+            within_grace = bool(
+                not result.player_stats
+                and ko is not None
+                and now < ko + timedelta(hours=config.PLAYER_STATS_GRACE_HOURS)
+            )
+
             for rec in recs:
+                if within_grace and rec.market in _PLAYER_MARKETS:
+                    continue                     # stats atrasado → retenta depois
                 status = settle(rec.market, rec.selection, rec.line, result)
                 rec.status = status
-                rec.settled_at = datetime.now(timezone.utc)
+                rec.settled_at = now
                 rec.actual_result = _actual_label(rec, result)
                 _write_ledger(db, rec, status)
                 settled += 1

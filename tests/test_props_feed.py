@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src import config
 from src.services.football.data_service import FootballDataService
 
 
@@ -27,3 +28,22 @@ def test_props_feed_is_cached():
     assert isinstance(first, list)
     # Mesma chave de cache → mesmo resultado (não recomputa).
     assert len(first) == len(second)
+
+
+def test_prop_picks_respect_confidence_floor():
+    # P1+P2: nenhum prop abaixo do piso de confiança chega ao feed/persistência
+    # (remove player_cards ~30 e o lixo <60). O fixture gera props de confiança
+    # alta → a lista fica NÃO vazia (piso não zera o que é bom).
+    svc = FootballDataService()
+    _m, picks = svc.match_prop_picks(1001, context="general")   # Liverpool x Man City
+    assert picks, "esperava props no fixture (Liverpool x Man City)"
+    assert all(p.confidence_score >= config.MIN_DISPLAY_CONFIDENCE for p in picks)
+
+
+def test_prop_picks_gated_by_league(monkeypatch):
+    # P3a: liga fora de PROP_LEAGUE_IDS (ex.: copa) não gera props — evita o
+    # desperdício de props que nunca liquidam (copas com void altíssimo).
+    svc = FootballDataService()
+    monkeypatch.setattr(config, "PROP_LEAGUE_IDS", [999])   # 39 (PL) fica de fora
+    m, picks = svc.match_prop_picks(1001, context="general")
+    assert m is not None and picks == []

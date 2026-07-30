@@ -90,6 +90,17 @@ BRAZIL_LEAGUE_IDS: list[int] = [int(x) for x in _br_raw.split(",") if x.strip().
 # Amarelos que geram suspensão no Brasileirão (Série A/B). Usado só como SINAL
 # aproximado de "perto de suspender" (a api não expõe o acúmulo do ciclo atual).
 CARD_SUSPENSION_YELLOWS: int = int(os.getenv("CARD_SUSPENSION_YELLOWS", "3"))
+# Competições de COPA/mata-mata (sem pontos corridos). Usado p/ (a) NÃO gerar
+# player props (cobertura de stat por jogador é ruim — a CL deu 91,5% de void no
+# ledger) e (b) aplicar o boost de cartão só em copa (o m.stage do provider é
+# pouco confiável — retorna "knockout" até em rodada de liga). 2=Champions,
+# 13=Libertadores, 73=Copa do Brasil.
+_cup_raw = os.getenv("CUP_LEAGUE_IDS", "2,13,73")
+CUP_LEAGUE_IDS: list[int] = [int(x) for x in _cup_raw.split(",") if x.strip().isdigit()]
+# Ligas onde vale gerar player props. Copas ficam de fora (ver acima); default =
+# ligas regulares (Europa top-5 + Brasileirão A/B). Calibrável por env.
+_prop_raw = os.getenv("PROP_LEAGUE_IDS", "39,140,135,78,61,71,72")
+PROP_LEAGUE_IDS: list[int] = [int(x) for x in _prop_raw.split(",") if x.strip().isdigit()]
 # Temporada corrente (ano de início). Ex: 2025 = temporada 2025/26.
 CURRENT_SEASON: int = int(os.getenv("CURRENT_SEASON", "2025"))
 
@@ -147,6 +158,11 @@ MODEL_MARKET_BLEND: float = float(os.getenv("MODEL_MARKET_BLEND", "0.40"))
 # (ex.: não recomenda "Senegal vencer" a 20% só porque a odd está alta). 0.55 =
 # o modelo precisa realmente favorecer a seleção. Calibrável por env.
 MIN_PICK_PROB: float = float(os.getenv("MIN_PICK_PROB", "0.60"))
+# Piso de CONFIANÇA (0-100) pra EXIBIR/persistir um player prop. O ledger mostrou
+# calibração monotônica: <60 acerta ~26% (player_cards ~19%), ≥60 fica saudável.
+# Este piso remove o player_cards (evento de baixa prob, confiança ~30) e o lixo
+# <60 de uma vez — sem exceção por mercado. Calibrável por env.
+MIN_DISPLAY_CONFIDENCE: float = float(os.getenv("MIN_DISPLAY_CONFIDENCE", "60"))
 # Prob mínima pro "jogador pode marcar" AO VIVO. Gol é evento raro — mesmo o
 # melhor atacante fica < 60% num jogo, então o piso aqui é menor.
 LIVE_GOAL_MIN_PROB: float = float(os.getenv("LIVE_GOAL_MIN_PROB", "0.33"))
@@ -236,6 +252,11 @@ ENABLE_CARDS_FROM_EVENTS: bool = _flag("ENABLE_CARDS_FROM_EVENTS", "1")
 # finalizado nunca mudam → cache bem longo (compartilhado entre os dois times).
 STATS_AGG_TTL: int = int(os.getenv("STATS_AGG_TTL", str(6 * 3600)))
 STATS_MATCH_TTL: int = int(os.getenv("STATS_MATCH_TTL", str(7 * 24 * 3600)))
+# TTL CURTO pro cache VAZIO de stats por jogador (fixtures/players). Sem isso, uma
+# liquidação que roda ANTES da api-football popular os stats cacheava [] por 7
+# dias e o prop virava VOID PERMANENTE. Menor que o intervalo de settlement (15
+# min) → reprocessa no próximo ciclo quando o dado chega.
+STATS_MATCH_EMPTY_TTL: int = int(os.getenv("STATS_MATCH_EMPTY_TTL", "600"))  # 10 min
 
 # ---------------------------------------------------------------------------
 # Worker de settlement (fecha recomendações como hit/miss/push)
@@ -244,6 +265,10 @@ ENABLE_SETTLEMENT_WORKER: bool = _flag("ENABLE_SETTLEMENT_WORKER", "1")
 SETTLEMENT_INTERVAL_SECONDS: int = int(
     os.getenv("SETTLEMENT_INTERVAL_SECONDS", str(15 * 60))
 )
+# Carência (horas após o kickoff) pra liquidar player prop sem stats por jogador.
+# Se o jogo acabou mas fixtures/players ainda não saiu, o prop fica PENDING e
+# retenta — só vira void depois desta janela (aí é ausência real, não atraso).
+PLAYER_STATS_GRACE_HOURS: float = float(os.getenv("PLAYER_STATS_GRACE_HOURS", "8"))
 
 # ---------------------------------------------------------------------------
 # Escanteios — worker de features rolantes (pré-jogo) + parâmetros do modelo
