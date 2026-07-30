@@ -1665,10 +1665,16 @@ class FootballDataService:
             include_cards=is_br,     # cartão só nas ligas BR (regra de suspensão)
             home_card_ctx=home_ctx, away_card_ctx=away_ctx,
         )
-        # P1+P2: piso de confiança. Remove o player_cards (confiança ~30, acerto
-        # 18,8% no ledger) e todo prop <60 (faixa que acerta ~26%). Curadoria no
-        # service — o modelo (player_props.py) segue puro.
-        picks = [p for p in picks if p.confidence_score >= config.MIN_DISPLAY_CONFIDENCE]
+        # P1+P2: piso de confiança nos props (<60 acerta ~26% no ledger).
+        # EXCEÇÃO: player_cards — só é gerado no cenário de INCENTIVO do pendurado
+        # (2 amarelos + próximo fora OU gancho fácil→difícil); ali o sinal é o
+        # cenário, não a probabilidade (que é naturalmente baixa), então ignora o
+        # piso. Curadoria no service — o modelo (player_props.py) segue puro.
+        picks = [
+            p for p in picks
+            if p.market == "player_cards"
+            or p.confidence_score >= config.MIN_DISPLAY_CONFIDENCE
+        ]
         return m, picks
 
     def match_props(self, match_id: int, context: str = "general"):
@@ -1728,8 +1734,9 @@ class FootballDataService:
 
     @staticmethod
     def _next_opponent(team_id: int, current: Match, season_matches: list[Match]):
-        """(opp_id, opp_name) do PRÓXIMO jogo do time depois do atual, ou
-        (None, None). Ignora finalizados e o próprio jogo atual."""
+        """(opp_id, opp_name, next_away) do PRÓXIMO jogo do time depois do atual,
+        ou (None, None, False). next_away = o time joga FORA no próximo. Ignora
+        finalizados e o próprio jogo atual."""
         cur_ko = current.utc_kickoff
         cands = [
             mm for mm in season_matches
@@ -1739,27 +1746,30 @@ class FootballDataService:
                      and mm.utc_kickoff <= cur_ko)
         ]
         if not cands:
-            return None, None
+            return None, None, False
         cands.sort(key=lambda x: (x.utc_kickoff is None, x.utc_kickoff))
         nxt = cands[0]
-        return ((nxt.away_team.id, nxt.away_team.name) if nxt.home_team.id == team_id
-                else (nxt.home_team.id, nxt.home_team.name))
+        if nxt.home_team.id == team_id:
+            return nxt.away_team.id, nxt.away_team.name, False    # próximo em casa
+        return nxt.home_team.id, nxt.home_team.name, True         # próximo FORA
 
     def _card_contexts(self, m: Match, season: int, context: str):
-        """Janela estratégica do cartão pros dois times: {"strategic","next_opp"}.
-        strategic = adversário de AGORA está bem abaixo (na tabela) do PRÓXIMO
-        adversário do time — jogo fácil agora, difícil depois."""
+        """Cenário de INCENTIVO do cartão pros dois times: {"strategic",
+        "next_opp", "next_away"}. strategic = adversário de AGORA bem abaixo (na
+        tabela) do PRÓXIMO — jogo fácil agora, difícil depois. next_away = o
+        próximo jogo do time é fora de casa. Só nesses cenários o pendurado é
+        sinalizado (limpar o gancho no jogo de menor custo)."""
         ranks = self._standings_rank(m.league_id, season, context)
         smatches = self._season_matches_cached(m.league_id, season, context)
 
         def ctx(team_id: int, opp_now_id: int) -> dict:
-            nxt_id, nxt_name = self._next_opponent(team_id, m, smatches)
+            nxt_id, nxt_name, next_away = self._next_opponent(team_id, m, smatches)
             if not nxt_id:
-                return {"strategic": False, "next_opp": None}
+                return {"strategic": False, "next_opp": None, "next_away": False}
             r_now, r_next = ranks.get(opp_now_id), ranks.get(nxt_id)
             strategic = bool(r_now and r_next
                              and (r_now - r_next) >= self._STRATEGIC_RANK_MARGIN)
-            return {"strategic": strategic, "next_opp": nxt_name}
+            return {"strategic": strategic, "next_opp": nxt_name, "next_away": next_away}
 
         return ctx(m.home_team.id, m.away_team.id), ctx(m.away_team.id, m.home_team.id)
 

@@ -255,30 +255,25 @@ CARD_SUSPENSION_BOOST = 1.3
 
 def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
                opp_attack_scaler: float, opp: str,
-               *, near_suspension: bool = False, strategic: bool = False,
+               *, strategic: bool = False, next_away: bool = False,
                next_opp: Optional[str] = None) -> Optional[PropPick]:
-    # Cartão sobe com a intensidade defensiva do jogo: quanto mais o adversário
-    # ataca, mais o jogador defende/falta → mais amarelo. Ajuste SUAVE (como
-    # desarme) pra projeção ficar perto da taxa real do jogador.
-    lam = yellows_pg * _soften_scaler(opp_attack_scaler)
-    if near_suspension:
-        lam *= CARD_SUSPENSION_BOOST          # pendurado: pressão eleva o risco
+    # Só chega aqui o PENDURADO em cenário de incentivo (gancho estratégico OU
+    # próximo jogo fora). O cartão sobe com a intensidade defensiva do jogo e com
+    # a pressão do pendurado (boost).
+    lam = yellows_pg * _soften_scaler(opp_attack_scaler) * CARD_SUSPENSION_BOOST
     if lam <= 0.03:
         return None
     prob = 1.0 - poisson_pmf(0, lam)          # P(≥1 amarelo)
-    # Pendurado (risco de suspensão / gancho) surfa com piso menor.
-    floor = CARD_STRATEGIC_MIN_PROB if near_suspension else MIN_PROB["player_cards"]
-    if prob < floor:
+    if prob < CARD_STRATEGIC_MIN_PROB:        # piso baixo: o sinal é o cenário
         return None
-    # near_suspension = acúmulo do CICLO em (limiar-1) amarelos NO CAMPEONATO
-    # (amarelos_da_liga % 3 == 2). Mostramos "2 amarelos no campeonato", nunca o
-    # total geral — amarelo de copa não conta pra suspensão e confundiria.
+    # Acúmulo do CICLO em (limiar-1) amarelos NO CAMPEONATO (amarelos_da_liga %
+    # 3 == 2). Mostramos "2 amarelos no campeonato", nunca o total geral —
+    # amarelo de copa não conta pra suspensão e confundiria.
     accrual = f"{SUSPENSION_YELLOWS - 1} amarelos no campeonato"
-    # TRÊS motivos distintos:
-    #  (A) risco puro — a taxa do jogador × o jogo já pedem cartão;
-    #  (B) risco de suspensão — pendurado (a 1 do gancho); levar cartão = suspenso;
-    #  (C) gancho estratégico — pendurado E jogo de agora mais fácil que o próximo
-    #      (vale "queimar" o amarelo agora e cumprir o gancho antes do difícil).
+    # DOIS cenários de incentivo (o "risco puro" e o pendurado sem incentivo
+    # saíram — davam 18,8% no ledger e não têm a lógica de gancho):
+    #  (C) gancho estratégico — jogo de agora mais fácil que o próximo;
+    #  (B) próximo jogo fora — cumprir o gancho no jogo de menor custo.
     if strategic:
         tag = CARD_TAG_STRATEGIC
         nxt = f" antes de enfrentar {next_opp}" if next_opp else " antes de um jogo mais difícil"
@@ -287,17 +282,12 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
             f"mais fácil agora{nxt} — vale cumprir o gancho já. "
             f"Leva {yellows_pg:.2f} amarelo/jogo; modelo: {prob*100:.0f}% de levar cartão."
         )
-    elif near_suspension:
+    else:                                     # next_away
         tag = CARD_TAG_SUSPENSION
         reason = (
-            f"{player.name} está com {accrual} (a 1 da suspensão): se levar amarelo, "
-            f"pega gancho. Leva {yellows_pg:.2f} amarelo/jogo; {opp}. "
-            f"Modelo: {prob*100:.0f}% de levar cartão."
-        )
-    else:
-        tag = CARD_TAG_RISK
-        reason = (
-            f"{player.name} leva {yellows_pg:.2f} amarelo/jogo; {opp}. "
+            f"{player.name} está com {accrual} (a 1 da suspensão) e o próximo jogo "
+            f"é fora de casa — momento de menor custo pra cumprir o gancho. "
+            f"Leva {yellows_pg:.2f} amarelo/jogo; {opp}. "
             f"Modelo: {prob*100:.0f}% de levar cartão."
         )
     return PropPick(
@@ -314,34 +304,30 @@ def _card_pick(player: PlayerSchema, team: str, yellows_pg: float,
 def _cards_props(players: list[PlayerSchema], team: str,
                  opp_attack_scaler: float,
                  card_ctx: Optional[dict] = None) -> list[PropPick]:
-    """Cartão de jogador (só ligas BR): ranqueia pelos mais faltosos (amarelos/
-    jogo) — inclui zagueiros/volantes. `card_ctx` = {"strategic": bool,
-    "next_opp": str} traz a janela de dificuldade (jogo fácil→difícil) pra marcar
-    o 'gancho estratégico' quando o jogador está a 1 da suspensão."""
-    opp = _tackle_opp_label(opp_attack_scaler)      # mesma leitura de intensidade
+    """Cartão de jogador (só ligas BR) — sinaliza SÓ o pendurado (2 amarelos no
+    ciclo) num cenário de INCENTIVO pra cumprir o gancho: próximo jogo fora OU
+    janela do gancho (fácil agora → difícil depois). `card_ctx` = {"strategic":
+    bool, "next_away": bool, "next_opp": str}. Fora desses cenários, não gera
+    (o 'risco puro' dava 18,8% de acerto no ledger)."""
     strategic_window = bool(card_ctx and card_ctx.get("strategic"))
+    next_away = bool(card_ctx and card_ctx.get("next_away"))
+    if not (strategic_window or next_away):
+        return []                                   # sem incentivo → não sinaliza
+    opp = _tackle_opp_label(opp_attack_scaler)      # mesma leitura de intensidade
     next_opp = (card_ctx or {}).get("next_opp")
 
     def _near(p: PlayerSchema) -> bool:
         yc = p.yellow_cards or 0
         return yc > 0 and (yc % SUSPENSION_YELLOWS == SUSPENSION_YELLOWS - 1)
 
-    ranked = sorted(players,
-                    key=lambda x: _per_game(x.yellow_cards or 0, x.appearances),
-                    reverse=True)
-    # Top-N por taxa (risco puro) + TODO pendurado (flag de risco de suspensão),
-    # mesmo com taxa modesta — não pode cair no teto do top-N.
-    candidates = list(ranked[:TOP_N_PER_TEAM])
-    seen = {id(p) for p in candidates}
-    candidates += [p for p in ranked if _near(p) and id(p) not in seen]
-
     picks: list[PropPick] = []
-    for p in candidates:
+    for p in players:
+        if not _near(p):                            # só os pendurados
+            continue
         yc = p.yellow_cards or 0
-        near = _near(p)
         pick = _card_pick(p, team, _per_game(yc, p.appearances),
-                          opp_attack_scaler, opp, near_suspension=near,
-                          strategic=(near and strategic_window),
+                          opp_attack_scaler, opp,
+                          strategic=strategic_window, next_away=next_away,
                           next_opp=next_opp)
         if pick:
             picks.append(pick)

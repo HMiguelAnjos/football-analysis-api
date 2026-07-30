@@ -116,38 +116,46 @@ def test_confidence_first_picks_are_settleable_codes():
         assert p.confidence_score >= 60.0  # respeita o piso MIN_PICK_PROB
 
 
-def test_card_prop_differentiates_risk_vs_strategic():
+def test_card_prop_only_pendurado_with_incentive():
+    """player_cards só sinaliza o PENDURADO (2 amarelos no ciclo) num cenário de
+    incentivo: gancho estratégico (fácil→difícil) OU próximo jogo fora. O 'risco
+    puro' e o pendurado sem incentivo saíram (davam 18,8% no ledger)."""
     match = _match()
     home = TeamForm(team_id=1, matches_played=10, goals_for=1.4, goals_against=1.2)
     away = TeamForm(team_id=2, matches_played=10, goals_for=1.3, goals_against=1.3)
-    # Zagueiro faltoso, a 1 da suspensão (regra 3): 5 % 3 == 2. Taxa 0.625/jogo
-    # passa o piso de prob do mercado (0.30).
+    # Zagueiro faltoso, a 1 da suspensão (regra 3): 5 % 3 == 2.
     booker = PlayerSchema(id=77, name="Zagueiro", team_id=1, appearances=8,
                           yellow_cards=5, position="Defender")
 
-    # Janela estratégica ativa (jogo fácil agora → difícil depois) → "gancho".
-    strat = generate_player_props(
-        match=match, home_form=home, away_form=away,
-        home_players=[booker], away_players=[], include_cards=True,
-        home_card_ctx={"strategic": True, "next_opp": "Palmeiras"})
-    card = next(p for p in strat if p.market == "player_cards")
-    assert card.tag == "Gancho estratégico"
-    assert "Palmeiras" in card.recommendation_reason
+    def _cards(ctx):
+        picks = generate_player_props(
+            match=match, home_form=home, away_form=away,
+            home_players=[booker], away_players=[], include_cards=True,
+            home_card_ctx=ctx)
+        return [p for p in picks if p.market == "player_cards"]
 
-    # Pendurado SEM janela estratégica → flag de risco de suspensão.
-    susp = generate_player_props(
-        match=match, home_form=home, away_form=away,
-        home_players=[booker], away_players=[], include_cards=True,
-        home_card_ctx={"strategic": False, "next_opp": "Palmeiras"})
-    assert next(p for p in susp if p.market == "player_cards").tag == "Risco de suspensão"
+    # (C) Janela estratégica (jogo fácil agora → difícil depois) → "gancho".
+    strat = _cards({"strategic": True, "next_away": False, "next_opp": "Palmeiras"})
+    assert strat and strat[0].tag == "Gancho estratégico"
+    assert "Palmeiras" in strat[0].recommendation_reason
 
-    # Jogador faltoso mas NÃO pendurado (1 amarelo) → risco de cartão puro.
+    # (B) Próximo jogo FORA (sem janela estratégica) → risco de suspensão.
+    away_ctx = _cards({"strategic": False, "next_away": True, "next_opp": "Palmeiras"})
+    assert away_ctx and away_ctx[0].tag == "Risco de suspensão"
+    assert "fora de casa" in away_ctx[0].recommendation_reason
+
+    # Pendurado SEM incentivo (nem gancho nem próximo fora) → NÃO sinaliza.
+    assert _cards({"strategic": False, "next_away": False, "next_opp": None}) == []
+
+    # Faltoso mas NÃO pendurado (4 amarelos, 4%3==1), mesmo com incentivo → nada
+    # (o 'risco puro' foi removido).
     hothead = PlayerSchema(id=88, name="Brigão", team_id=1, appearances=8,
-                           yellow_cards=4, position="Midfielder")   # 4%3==1, não pendurado
+                           yellow_cards=4, position="Midfielder")
     risk = generate_player_props(
         match=match, home_form=home, away_form=away,
-        home_players=[hothead], away_players=[], include_cards=True)
-    assert next(p for p in risk if p.market == "player_cards").tag == "Risco de cartão"
+        home_players=[hothead], away_players=[], include_cards=True,
+        home_card_ctx={"strategic": True, "next_away": True, "next_opp": "X"})
+    assert not any(p.market == "player_cards" for p in risk)
 
     # include_cards=False → nenhuma prop de cartão.
     none = generate_player_props(
