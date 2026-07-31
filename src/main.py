@@ -368,10 +368,11 @@ def admin_performance(
     _user=Depends(require_permission(VIEW_PERFORMANCE)),
     db: Session = Depends(get_db),
     only_shown: bool = Query(False),
+    curated: bool = Query(True),   # só o que recomendaríamos hoje (False = ledger cru)
 ):
     from src.services.pick_results_service import performance_breakdown
     try:
-        return performance_breakdown(db, only_shown=only_shown)
+        return performance_breakdown(db, only_shown=only_shown, curated=curated)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Erro ao calcular performance: {exc}")
 

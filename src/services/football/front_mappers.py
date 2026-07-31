@@ -149,10 +149,15 @@ def pickresult_to_out(r: FootballPickResult) -> PickResultOut:
     )
 
 
-def performance_summary(db: Session, context: str = "general") -> PerformanceSummary:
+def performance_summary(db: Session, context: str = "general",
+                        curated: bool = True) -> PerformanceSummary:
+    from src.services.pick_results_service import is_current_curation
+
     rows = list(db.scalars(
         select(FootballPickResult).where(FootballPickResult.context == context)
     ).all())
+    if curated:                                   # só o que recomendaríamos HOJE
+        rows = [r for r in rows if is_current_curation(r)]
 
     def _bucket():
         return {"won": 0, "lost": 0, "push": 0, "pending": 0, "profit": 0.0}

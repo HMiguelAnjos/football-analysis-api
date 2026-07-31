@@ -188,12 +188,40 @@ def _accuracy(won: int, lost: int) -> float:
     return round(won / denom, 4) if denom else 0.0
 
 
-def performance_breakdown(db: Session, *, only_shown: bool = False) -> dict:
-    """Agregações de performance a partir do ledger imutável."""
+# ─── Curadoria ATUAL (o que o sistema recomendaria HOJE) ─────────────────────
+# Filtra o ledger pro Dashboard: a taxa de acerto passa a refletir só o que
+# continuaríamos mostrando pós-ajustes (jul/2026). Ficam de fora: mercados
+# aposentados (1x2/handicap/dnb), player_cards (a regra nova é CENÁRIO —
+# pendurado + incentivo —, não recuperável no histórico; validado à parte) e
+# picks abaixo do piso do FEED. Espelha _OPP_MARKET_FLOOR + MIN_DISPLAY_CONFIDENCE.
+_CURATED_MARKETS = {
+    "double_chance", "over_under", "btts", "corners", "cards",
+    "player_shots", "player_shots_on_target", "player_tackles",
+    "player_assists", "anytime_scorer",
+}
+_CURATED_CONF_FLOOR = {"over_under": 75.0, "btts": 63.0}   # resto no piso global
+_CURATED_CONF_DEFAULT = 60.0
+
+
+def is_current_curation(row) -> bool:
+    """True se o pick liquidado corresponde ao que o sistema recomendaria HOJE
+    (mercado ainda gerado + confiança acima do piso atual do feed)."""
+    if row.market not in _CURATED_MARKETS:
+        return False
+    floor = _CURATED_CONF_FLOOR.get(row.market, _CURATED_CONF_DEFAULT)
+    return (row.confidence_score or 0.0) >= floor
+
+
+def performance_breakdown(db: Session, *, only_shown: bool = False,
+                          curated: bool = True) -> dict:
+    """Agregações de performance a partir do ledger imutável. `curated` (default)
+    filtra pro que o sistema recomendaria HOJE — ver is_current_curation."""
     q = select(FootballPickResult)
     if only_shown:
         q = q.where(FootballPickResult.was_shown_to_user.is_(True))
     rows = list(db.scalars(q).all())
+    if curated:
+        rows = [r for r in rows if is_current_curation(r)]
 
     def _empty():
         return {"won": 0, "lost": 0, "push": 0, "void": 0, "profit_units": 0.0}
