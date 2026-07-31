@@ -51,6 +51,7 @@ from src.schemas.football_schemas import (
     OddsBoardItemSchema,
     PerformanceSummary,
     PickResultOut,
+    PlayerIndexesOut,
     PlayerSchema,
     RecommendationOut,
     TeamSchema,
@@ -450,6 +451,14 @@ def match_markets(match_id: int):
 @app.get("/football/matches/{match_id}/props", response_model=list[RecommendationOut])
 def match_props(match_id: int):
     return data_service.match_props(match_id)
+
+
+@app.get("/football/matches/{match_id}/player-indexes",
+         response_model=list[PlayerIndexesOut])
+def match_player_indexes(match_id: int):
+    """Índices IPO/ICJ/ID/IIP por jogador (fórmulas do spec, só dado real). Cada
+    índice traz score + cobertura + confiança + métricas ausentes."""
+    return data_service.player_indexes(match_id)
 
 
 @app.get("/football/cards/calibration")

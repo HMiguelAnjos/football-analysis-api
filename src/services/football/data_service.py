@@ -1950,6 +1950,52 @@ class FootballDataService:
         idxs.sort(key=key, reverse=True)
         return [pi.player for pi in idxs[:limit]]
 
+    def player_indexes(self, match_id: int, context: str = "general",
+                       *, min_minutes: int = 1) -> list:
+        """Índices IPO/ICJ/ID/IIP dos jogadores das DUAS equipes do jogo, com as
+        fórmulas EXATAS do spec e SÓ dado real da api-football. xG/xA/toques na
+        área/grandes chances/cruzamentos/recuperações/forma NÃO são fornecidos
+        POR JOGADOR pela fonte → entram como ausentes (reduzem cobertura, nunca
+        viram zero). Devolve list[PlayerIndexesOut]."""
+        from src.metrics.player_index import compute_player_indexes
+        m = self.match_domain(match_id, context=context)
+        if m is None:
+            return []
+        season = self._league_season(m.league_id, context)
+        is_br = m.league_id in config.BRAZIL_LEAGUE_IDS
+        pool_league = m.league_id if is_br else None
+        out: list = []
+        for team in (m.home_team, m.away_team):
+            for p in self.team_player_pool(team.id, context, season=season,
+                                           league_id=pool_league):
+                if (p.minutes or 0) < min_minutes:
+                    continue
+                res = compute_player_indexes(self._player_index_input(p))
+                out.append(front_mappers.player_indexes_to_out(res, p, team.name))
+        return out
+
+    @staticmethod
+    def _player_index_input(p: PlayerSchema):
+        """PlayerSchema (temporada) → PlayerIndexInput. Preenche SÓ o que a
+        api-football entrega por jogador; o resto fica None (ausente ≠ 0)."""
+        from src.metrics.player_index import PlayerIndexInput
+
+        def _opt(v):        # count que a fonte dá (0 é real quando há minutos)
+            return None if v is None else float(v)
+
+        return PlayerIndexInput(
+            minutes=p.minutes or 0, appearances=p.appearances or 0,
+            # Ofensivo — só shots/sot são reais por jogador (xG/toques/forma não).
+            xg=p.xg, shots=_opt(p.shots), shots_on_target=_opt(p.shots_on_target),
+            touches_in_box=None, recent_form=None,
+            # Criação — só key_passes é real (xA/grandes chances/cruzamentos não).
+            xa=p.xa, key_passes=_opt(p.key_passes),
+            big_chances_created=None, accurate_crosses=None,
+            # Defesa — tackles/interceptions/duels_won reais; recuperações não.
+            tackles=_opt(p.tackles), interceptions=_opt(p.interceptions),
+            recoveries=None, duels_won=_opt(p.duels_won),
+        )
+
     def odds_board(self, *, league_id: Optional[int] = None,
                    market: Optional[str] = None) -> list[OddsBoardItemSchema]:
         """Painel de odds dos jogos do dia. A 'melhor' entrada = maior odd

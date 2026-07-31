@@ -158,6 +158,43 @@ DEFAULT_LINES = {
     "shots_on_target": 4.5,
 }
 
+# ─── ÍNDICES DE JOGADOR (IPO / ICJ / ID / IIP) — spec do produto ─────────────
+# Pesos das FÓRMULAS (batem com o spec). Métrica ausente NÃO vira zero: sai do
+# somatório e reduz a cobertura/confiança (ver metrics/player_index.py).
+PLAYER_IPO_WEIGHTS = {   # Índice de Perigo Ofensivo
+    "xg": 0.40, "shots": 0.15, "shots_on_target": 0.20,
+    "touches_in_box": 0.15, "recent_form": 0.10,
+}
+PLAYER_ICJ_WEIGHTS = {   # Índice de Criação de Jogadas
+    "xa": 0.40, "key_passes": 0.30, "big_chances_created": 0.20,
+    "accurate_crosses": 0.10,
+}
+PLAYER_ID_WEIGHTS = {    # Índice Defensivo
+    "tackles": 0.35, "interceptions": 0.35, "recoveries": 0.20, "duels_won": 0.10,
+}
+# IIP = média ponderada dos componentes. NEUTRO = pesos iguais (1/3). Sem um
+# modelo por posição VALIDADO no histórico, não cravar peso arbitrário (spec).
+PLAYER_IIP_WEIGHTS = {"ipo": 1 / 3, "icj": 1 / 3, "id": 1 / 3}
+
+# Faixas de normalização POR-90 (bruto → 0–100). Fallback DOCUMENTADO (tier 3 do
+# spec): teto ~elite por-90. Trocar por percentil (liga/season/posição) quando
+# houver histórico suficiente. recent_form já entra como score 0–100.
+PLAYER_NORM_P90: dict[str, tuple[float, float]] = {
+    "xg": (0.0, 0.8), "shots": (0.0, 5.0), "shots_on_target": (0.0, 2.0),
+    "touches_in_box": (0.0, 10.0),
+    "xa": (0.0, 0.5), "key_passes": (0.0, 3.0),
+    "big_chances_created": (0.0, 1.0), "accurate_crosses": (0.0, 3.0),
+    "tackles": (0.0, 5.0), "interceptions": (0.0, 4.0),
+    "recoveries": (0.0, 10.0), "duels_won": (0.0, 8.0),
+}
+PLAYER_SCORE_METRICS = {"recent_form"}   # já 0–100 → não passa por faixa per-90
+
+PLAYER_MIN_COVERAGE = 0.50      # abaixo → índice marcado indisponível (available=False)
+PLAYER_CONF_HIGH = 0.80
+PLAYER_CONF_MEDIUM = 0.50
+PLAYER_MIN_MINUTES = 180        # amostra mínima p/ per-90 confiável (senão low)
+PLAYER_INDEX_NORM_VERSION = "player-idx-v1-p90-ranges"
+
 # ─── AO VIVO ─────────────────────────────────────────────────────────────────
 # Faixas de normalização de estatísticas ACUMULADAS no jogo (não por 90).
 LIVE_NORM: dict[str, tuple[float, float]] = {

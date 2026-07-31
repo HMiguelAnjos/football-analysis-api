@@ -184,6 +184,41 @@ class PlayerSchema(BaseModel):
     iip: Optional[float] = None
 
 
+# ─── Índices de jogador detalhados (IPO/ICJ/ID/IIP com cobertura/confiança) ──
+class IndexComponentOut(BaseModel):
+    score: Optional[float] = None                 # 0–100 (None se sem dado)
+    coverage: float = 0.0                          # peso disponível / total
+    confidence: str = "unavailable"                # high|medium|low|unavailable
+    available: bool = False                         # coverage ≥ piso mínimo
+    missing_metrics: list[str] = []
+    breakdown: dict[str, Optional[float]] = {}
+
+
+class IIPOut(BaseModel):
+    score: Optional[float] = None
+    base_score: Optional[float] = None
+    context_factor: float = 1.0
+    coverage: float = 0.0
+    confidence: str = "unavailable"
+    available: bool = False
+    missing_components: list[str] = []
+
+
+class PlayerIndexesOut(BaseModel):
+    player_id: int
+    player: str
+    team: Optional[str] = None
+    position: Optional[str] = None
+    minutes: int = 0
+    appearances: int = 0
+    low_sample: bool = False                        # minutos abaixo da amostra mínima
+    normalization_version: str
+    ipo: IndexComponentOut
+    icj: IndexComponentOut
+    id: IndexComponentOut
+    iip: IIPOut
+
+
 # ─── Estatísticas de partida (tela de análise) ───────────────────────────
 class TeamMatchStatsSchema(BaseModel):
     team: TeamRefSchema

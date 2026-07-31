@@ -17,12 +17,15 @@ from src.db.models import (
     FootballRecommendation,
 )
 from src.schemas.football_schemas import (
+    IIPOut,
+    IndexComponentOut,
     LivePickOut,
     LiveRecoOut,
     PerfBreakdownItem,
     PerformanceSummary,
     PerfTotals,
     PickResultOut,
+    PlayerIndexesOut,
     RecommendationOut,
 )
 
@@ -146,6 +149,32 @@ def pickresult_to_out(r: FootballPickResult) -> PickResultOut:
         profit=r.profit_units,
         analyst_name=r.analyst_name, created_at=_iso(r.settled_at) or "",
         settled_at=_iso(r.settled_at),
+    )
+
+
+def _index_component_out(r) -> IndexComponentOut:
+    return IndexComponentOut(
+        score=r.score, coverage=r.coverage, confidence=r.confidence,
+        available=r.available, missing_metrics=r.missing_metrics,
+        breakdown=r.breakdown,
+    )
+
+
+def player_indexes_to_out(res, player, team_name: Optional[str] = None) -> PlayerIndexesOut:
+    """PlayerIndexes (metrics/player_index) + PlayerSchema → schema do front."""
+    return PlayerIndexesOut(
+        player_id=player.id, player=player.name,
+        team=team_name or player.team, position=player.position,
+        minutes=res.minutes, appearances=player.appearances or 0,
+        low_sample=res.low_sample, normalization_version=res.normalization_version,
+        ipo=_index_component_out(res.ipo), icj=_index_component_out(res.icj),
+        id=_index_component_out(res.id),
+        iip=IIPOut(
+            score=res.iip.score, base_score=res.iip.base_score,
+            context_factor=res.iip.context_factor, coverage=res.iip.coverage,
+            confidence=res.iip.confidence, available=res.iip.available,
+            missing_components=res.iip.missing_components,
+        ),
     )
 
 
